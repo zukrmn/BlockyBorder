@@ -19,12 +19,11 @@ public class BlockyBorder extends JavaPlugin {
     private final BorderPlayerListener playerListener = new BorderPlayerListener();
     private Properties cfg = new Properties();
 
-    // Bordas e modo loop
     private boolean enabled;
     private boolean loopEnabled;
     private double minX, maxX, minZ, maxZ;
     private double buffer;
-    private static final int IGNORE_TICKS = 3; // ticks para ignorar checagem pós-teleporte
+    private static final int IGNORE_TICKS = 3;
     private final Map<UUID, Integer> ignoreBorderTicks = new ConcurrentHashMap<>();
 
     @Override
@@ -54,7 +53,6 @@ public class BlockyBorder extends JavaPlugin {
             try {
                 cfg.setProperty("enabled", "true");
                 cfg.setProperty("loop", "true");
-                // Coordenadas corretas:
                 cfg.setProperty("x1", "-5333");
                 cfg.setProperty("z1", "-2647");
                 cfg.setProperty("x2", "5291");
@@ -77,7 +75,6 @@ public class BlockyBorder extends JavaPlugin {
         this.enabled = boolProp("enabled", true);
         this.loopEnabled = boolProp("loop", true);
 
-        // Agora, usa os valores corretos do arquivo
         double x1 = doubleProp("x1", -5333.0);
         double z1 = doubleProp("z1", -2647.0);
         double x2 = doubleProp("x2", 5291.0);
@@ -102,18 +99,16 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    // Teleporte seguro, sempre no topo
     private void safeTeleport(Player player, Location location) {
         World world = location.getWorld();
         int x = location.getBlockX();
         int z = location.getBlockZ();
         int highestY = world.getHighestBlockYAt(x, z);
-        location.setY(highestY + 1.2); // buffer
-        ignoreBorderTicks.put(player.getUniqueId(), IGNORE_TICKS); // ignora por alguns ticks
+        location.setY(highestY + 1.2);
+        ignoreBorderTicks.put(player.getUniqueId(), IGNORE_TICKS);
         player.teleport(location);
     }
 
-    // Tick handler para remover ignorados
     public void borderIgnoreTick() {
         Iterator<Map.Entry<UUID, Integer>> it = ignoreBorderTicks.entrySet().iterator();
         while (it.hasNext()) {
@@ -127,17 +122,15 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    // Listener Corrigido
     private class BorderPlayerListener extends PlayerListener {
         @Override
         public void onPlayerMove(PlayerMoveEvent event) {
             if (!enabled) return;
             Player player = event.getPlayer();
-            if (ignoreBorderTicks.containsKey(player.getUniqueId())) return; // ignora checagem pós-teleporte
+            if (ignoreBorderTicks.containsKey(player.getUniqueId())) return;
 
             Location to = event.getTo();
             double toX = to.getX(), toZ = to.getZ();
-            // Fora da borda?
             if (toX < minX || toX > maxX || toZ < minZ || toZ > maxZ) {
                 if (loopEnabled) {
                     Location newLoc = to.clone();
@@ -149,9 +142,7 @@ public class BlockyBorder extends JavaPlugin {
                     World world = newLoc.getWorld();
                     int chunkX = newLoc.getBlockX() >> 4;
                     int chunkZ = newLoc.getBlockZ() >> 4;
-                    if (!world.isChunkLoaded(chunkX, chunkZ)) {
-                        world.loadChunk(chunkX, chunkZ);
-                    }
+                    world.loadChunk(chunkX, chunkZ);
                     safeTeleport(player, newLoc);
                 } else {
                     Location from = event.getFrom();
@@ -164,60 +155,69 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    // Comando /fill
-    // Sintaxe: /fill <freq> <pad>
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!cmd.getName().equalsIgnoreCase("fill")) return false;
-        int freq = 5; // chunks por tick
+        World world = getServer().getWorlds().get(0);
         int pad = 0;
         if (args.length >= 1) {
-            try { freq = Math.max(1, Integer.parseInt(args[0])); } catch (Exception ignored) {}
+            try { pad = Integer.parseInt(args[0]); } catch (Exception ignored) {}
         }
-        if (args.length >= 2) {
-            try { pad = Integer.parseInt(args[1]); } catch (Exception ignored) {}
-        }
-        sender.sendMessage("[BlockyBorder] Pré-geração dos chunks iniciada...");
-        World world = getServer().getWorlds().get(0);
 
         int cminX = ((int) minX >> 4) - pad, cmaxX = ((int) maxX >> 4) + pad;
         int cminZ = ((int) minZ >> 4) - pad, cmaxZ = ((int) maxZ >> 4) + pad;
 
         BukkitScheduler scheduler = getServer().getScheduler();
-        scheduler.scheduleSyncRepeatingTask(this,
-            new FillTask(world, cminX, cmaxX, cminZ, cmaxZ, freq, sender),
-            0L, 1L
-        );
+        int taskId = scheduler.scheduleSyncRepeatingTask(this,
+            new PrePopulateTask(world, cminX, cmaxX, cminZ, cmaxZ, sender), 0L, 2L);
+        PrePopulateTask.setTaskId(taskId);
+        sender.sendMessage("[BlockyBorder] Iniciando geração automática de todo o território!");
         return true;
     }
 
-    // Task para geração dos chunks (usando Runnable padrão)
-    class FillTask implements Runnable {
+    // Task que percorre todas as faixas Z, automatizando o populate
+    static class PrePopulateTask implements Runnable {
         private final World world;
-        private final int maxX, minZ, maxZ, freq;
+        private final int cminX, cmaxX, cminZ, cmaxZ;
         private final CommandSender sender;
-        private int curX, curZ;
-        private final int total;
-        private int done;
+        private int curZ, curX;
+        private static int taskId = -1;
 
-        FillTask(World w, int minX, int maxX, int minZ, int maxZ, int freq, CommandSender sender) {
-            this.world = w; this.maxX = maxX; this.minZ = minZ; this.maxZ = maxZ; this.freq = freq; this.sender = sender;
-            this.curX = minX; this.curZ = minZ;
-            this.total = (maxX - minX + 1) * (maxZ - minZ + 1); this.done = 0;
+        public static void setTaskId(int id) { taskId = id; }
+
+        PrePopulateTask(World w, int cminX, int cmaxX, int cminZ, int cmaxZ, CommandSender sender) {
+            this.world = w; this.cminX = cminX; this.cmaxX = cmaxX; this.cminZ = cminZ; this.cmaxZ = cmaxZ; this.sender = sender;
+            this.curZ = cminZ; this.curX = cminX;
         }
 
         public void run() {
-            int count = 0;
-            while (count < freq && curX <= maxX) {
-                if (curZ > maxZ) { curZ = minZ; curX++; continue; }
-                if (!world.isChunkLoaded(curX, curZ)) { world.loadChunk(curX, curZ); }
-                done++; count++;
+            if (curZ > cmaxZ) {
+                sender.sendMessage("[BlockyBorder] Geração populada COMPLETA em todas as faixas!");
+                Bukkit.getScheduler().cancelTask(taskId);
+                return;
+            }
+            Player fakePlayer = buscaFakePlayerOnline(world);
+            if (fakePlayer == null) {
+                sender.sendMessage("[BlockyBorder] Nenhum jogador online! Execute com pelo menos 1 player.");
+                Bukkit.getScheduler().cancelTask(taskId);
+                return;
+            }
+            if (curX > cmaxX) {
+                curX = cminX;
                 curZ++;
+                return;
             }
-            if (done % 100 == 0) sender.sendMessage("[BlockyBorder] Chunks gerados: " + done + "/" + total);
-            if (curX > maxX) {
-                sender.sendMessage("[BlockyBorder] Pré-geração concluída. Chunks gerados: " + done);
-            }
+            int blockX = (curX << 4) + 8;
+            int blockZ = (curZ << 4) + 8;
+            Location target = new Location(world, blockX, 200, blockZ);
+            fakePlayer.teleport(target);
+            sender.sendMessage("[BlockyBorder] Populating chunk ("+curX+","+curZ+") via teleport.");
+            curX++;
+        }
+
+        private Player buscaFakePlayerOnline(World w) {
+            for (Player p : w.getPlayers()) return p;
+            return null;
         }
     }
 }
