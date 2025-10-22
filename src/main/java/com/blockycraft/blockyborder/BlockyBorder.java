@@ -149,9 +149,7 @@ public class BlockyBorder extends JavaPlugin {
                     World world = newLoc.getWorld();
                     int chunkX = newLoc.getBlockX() >> 4;
                     int chunkZ = newLoc.getBlockZ() >> 4;
-                    if (!world.isChunkLoaded(chunkX, chunkZ)) {
-                        world.loadChunk(chunkX, chunkZ);
-                    }
+                    world.loadChunk(chunkX, chunkZ); // otimizado: sempre tenta carregar, sem checar antes
                     safeTeleport(player, newLoc);
                 } else {
                     Location from = event.getFrom();
@@ -191,7 +189,7 @@ public class BlockyBorder extends JavaPlugin {
         return true;
     }
 
-    // Task para geração dos chunks (usando Runnable padrão)
+    // Task para geração dos chunks (otimizada)
     class FillTask implements Runnable {
         private final World world;
         private final int maxX, minZ, maxZ, freq;
@@ -199,22 +197,35 @@ public class BlockyBorder extends JavaPlugin {
         private int curX, curZ;
         private final int total;
         private int done;
+        private int lastUnloadBatchX;
 
         FillTask(World w, int minX, int maxX, int minZ, int maxZ, int freq, CommandSender sender) {
             this.world = w; this.maxX = maxX; this.minZ = minZ; this.maxZ = maxZ; this.freq = freq; this.sender = sender;
             this.curX = minX; this.curZ = minZ;
             this.total = (maxX - minX + 1) * (maxZ - minZ + 1); this.done = 0;
+            this.lastUnloadBatchX = minX;
         }
 
         public void run() {
             int count = 0;
             while (count < freq && curX <= maxX) {
                 if (curZ > maxZ) { curZ = minZ; curX++; continue; }
-                if (!world.isChunkLoaded(curX, curZ)) { world.loadChunk(curX, curZ); }
+                world.loadChunk(curX, curZ); // remove isChunkLoaded p/ reduzir syscalls
                 done++; count++;
                 curZ++;
             }
-            if (done % 100 == 0) sender.sendMessage("[BlockyBorder] Chunks gerados: " + done + "/" + total);
+            if (done % 1000 == 0)
+                sender.sendMessage("[BlockyBorder] Chunks gerados: " + done + "/" + total);
+
+            // OPCIONAL: liberar chunks antigos do cache se RAM subir muito (tune conforme sua demanda)
+            if (done % 10000 == 0) {
+                for (int x = lastUnloadBatchX; x < curX; x++) {
+                    for (int z = minZ; z <= maxZ; z++) {
+                        world.unloadChunk(x, z, false, false);
+                    }
+                }
+                lastUnloadBatchX = curX;
+            }
             if (curX > maxX) {
                 sender.sendMessage("[BlockyBorder] Pré-geração concluída. Chunks gerados: " + done);
             }
