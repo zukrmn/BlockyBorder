@@ -1,118 +1,91 @@
 package com.blockycraft.blockyborder;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.util.Properties;
-import java.util.logging.Logger;
-
-import org.bukkit.Location;
-import org.bukkit.World;
+import org.bukkit.*;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
-import org.bukkit.event.Event;
-import org.bukkit.event.Event.Priority;
 import org.bukkit.event.player.PlayerListener;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitScheduler;
+
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
 
 public class BlockyBorder extends JavaPlugin {
-
     private static final Logger LOG = Logger.getLogger("Minecraft");
-    private final PlayerListener playerListener = new BorderPlayerListener();
+    private final BorderPlayerListener playerListener = new BorderPlayerListener();
     private Properties cfg = new Properties();
 
-    // Configuration values
+    // Bordas e modo loop
     private boolean enabled;
     private boolean loopEnabled;
     private double minX, maxX, minZ, maxZ;
     private double buffer;
+    private static final int IGNORE_TICKS = 3; // ticks para ignorar checagem pós-teleporte
+    private final Map<UUID, Integer> ignoreBorderTicks = new ConcurrentHashMap<>();
 
     @Override
     public void onEnable() {
         getDataFolder().mkdirs();
         loadConfig();
+        getServer().getPluginManager().registerEvent(
+            org.bukkit.event.Event.Type.PLAYER_MOVE,
+            playerListener,
+            org.bukkit.event.Event.Priority.Normal,
+            this
+        );
 
-        if (enabled) {
-            getServer().getPluginManager().registerEvent(Event.Type.PLAYER_MOVE, playerListener, Priority.Normal, this);
-            LOG.info("[WorldBorder] Enabled. Border is at (" + minX + ", " + minZ + ") to (" + maxX + ", " + maxZ + "). Loop mode: " + loopEnabled);
-        } else {
-            LOG.info("[WorldBorder] Plugin is disabled in config.properties.");
-        }
+        LOG.info("[BlockyBorder] Enabled. Border is at (" + minX + "," + minZ + ") to (" + maxX + "," + maxZ + "). Loop mode: " + loopEnabled);
+        getServer().getScheduler().scheduleSyncRepeatingTask(this, new Runnable() {
+            public void run() { borderIgnoreTick(); }
+        }, 1L, 1L);
     }
 
     @Override
     public void onDisable() {
-        LOG.info("[WorldBorder] Disabled.");
-    }
-    
-    /**
-     * Teleports a player safely to a new location.
-     * It finds the highest solid block at the destination X/Z to prevent both
-     * suffocation and fall damage.
-     * @param player The player to teleport.
-     * @param location The desired destination location.
-     */
-    private void safeTeleport(Player player, Location location) {
-        World world = location.getWorld();
-        int x = location.getBlockX();
-        int z = location.getBlockZ();
-
-        // Always find the highest solid block to land on.
-        // This prevents both fall damage (high to low) and suffocation (low to high).
-        int highestY = world.getHighestBlockYAt(x, z);
-        
-        // Set the new location to be safely on top of that block.
-        location.setY(highestY + 1.2); // 1.2 provides a small buffer above the ground
-        
-        player.teleport(location);
+        LOG.info("[BlockyBorder] Disabled.");
     }
 
     private void loadConfig() {
         File configFile = new File(getDataFolder(), "config.properties");
-
         if (!configFile.exists()) {
             try {
                 cfg.setProperty("enabled", "true");
-                cfg.setProperty("loop", "false");
+                cfg.setProperty("loop", "true");
                 cfg.setProperty("x1", "-1000");
                 cfg.setProperty("z1", "-1000");
                 cfg.setProperty("x2", "1000");
                 cfg.setProperty("z2", "1000");
                 cfg.setProperty("buffer", "2.0");
-
                 FileOutputStream os = new FileOutputStream(configFile);
-                cfg.store(os, "WorldBorder Plugin Configuration\n" +
-                              "# 'enabled': true/false - Turn the plugin on or off.\n" +
-                              "# 'loop': true/false - If true, players teleport to the opposite border. If false, they are blocked.\n" +
-                              "# 'x1', 'z1', 'x2', 'z2': The two corners of the border rectangle.\n" +
-                              "# 'buffer': The distance from the border a player is teleported to when looping.");
+                cfg.store(os, "BlockyBorder Config");
                 os.close();
             } catch (Exception e) {
-                LOG.warning("[WorldBorder] Could not write default config: " + e.getMessage());
+                LOG.warning("[BlockyBorder] Could not write default config: " + e.getMessage());
             }
         }
-
         try {
             FileInputStream is = new FileInputStream(configFile);
             cfg.load(is);
             is.close();
         } catch (Exception e) {
-            LOG.warning("[WorldBorder] Could not read config: " + e.getMessage());
+            LOG.warning("[BlockyBorder] Could not read config: " + e.getMessage());
         }
-
         this.enabled = boolProp("enabled", true);
-        this.loopEnabled = boolProp("loop", false);
-        
-        double x1 = doubleProp("x1", -1000.0);
-        double z1 = doubleProp("z1", -1000.0);
-        double x2 = doubleProp("x2", 1000.0);
-        double z2 = doubleProp("z2", 1000.0);
+        this.loopEnabled = boolProp("loop", true);
+
+        double x1 = doubleProp("x1", -5333.0);
+        double z1 = doubleProp("z1", -2647.0);
+        double x2 = doubleProp("x2", 5291.0);
+        double z2 = doubleProp("z2", 2595.0);
 
         this.minX = Math.min(x1, x2);
         this.maxX = Math.max(x1, x2);
         this.minZ = Math.min(z1, z2);
         this.maxZ = Math.max(z1, z2);
-        
         this.buffer = doubleProp("buffer", 2.0);
     }
 
@@ -120,7 +93,6 @@ public class BlockyBorder extends JavaPlugin {
         String val = cfg.getProperty(key, String.valueOf(def));
         return val.equalsIgnoreCase("true");
     }
-
     private double doubleProp(String key, double def) {
         try {
             return Double.parseDouble(cfg.getProperty(key, String.valueOf(def)));
@@ -129,63 +101,126 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
+    // Teleporte seguro, sempre no topo
+    private void safeTeleport(Player player, Location location) {
+        World world = location.getWorld();
+        int x = location.getBlockX();
+        int z = location.getBlockZ();
+        int highestY = world.getHighestBlockYAt(x, z);
+        location.setY(highestY + 1.2); // buffer
+        ignoreBorderTicks.put(player.getUniqueId(), IGNORE_TICKS); // ignora por alguns ticks
+        player.teleport(location);
+    }
+
+    // Tick handler para remover ignorados
+    public void borderIgnoreTick() {
+        Iterator<Map.Entry<UUID, Integer>> it = ignoreBorderTicks.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<UUID, Integer> entry = it.next();
+            int ticks = entry.getValue() - 1;
+            if (ticks <= 0) {
+                it.remove();
+            } else {
+                entry.setValue(ticks);
+            }
+        }
+    }
+
+    // Listener Corrigido
     private class BorderPlayerListener extends PlayerListener {
         @Override
         public void onPlayerMove(PlayerMoveEvent event) {
+            if (!enabled) return;
+            Player player = event.getPlayer();
+            if (ignoreBorderTicks.containsKey(player.getUniqueId())) return; // ignora checagem pós-teleporte
+
             Location to = event.getTo();
-            double toX = to.getX();
-            double toZ = to.getZ();
-
+            double toX = to.getX(), toZ = to.getZ();
+            // Fora da borda?
             if (toX < minX || toX > maxX || toZ < minZ || toZ > maxZ) {
-                Player player = event.getPlayer();
-
                 if (loopEnabled) {
                     Location newLoc = to.clone();
-                    
                     if (toX < minX) newLoc.setX(maxX - buffer);
                     else if (toX > maxX) newLoc.setX(minX + buffer);
-
                     if (toZ < minZ) newLoc.setZ(maxZ - buffer);
                     else if (toZ > maxZ) newLoc.setZ(minZ + buffer);
-                    
-                    // --- BEGIN FIX ---
-                    // We MUST load the chunk before calling safeTeleport.
-                    // safeTeleport queries the chunk for the highest block,
-                    // which will crash the server if the chunk isn't generated.
-                    
+
                     World world = newLoc.getWorld();
-                    
-                    // Convert block coordinates to chunk coordinates
-                    int chunkX = newLoc.getBlockX() >> 4; // (same as / 16)
-                    int chunkZ = newLoc.getBlockZ() >> 4; // (same as / 16)
-
-                    // Check if the chunk is loaded. If not, load (and generate) it.
+                    int chunkX = newLoc.getBlockX() >> 4;
+                    int chunkZ = newLoc.getBlockZ() >> 4;
                     if (!world.isChunkLoaded(chunkX, chunkZ)) {
-                        LOG.info("[WorldBorder] Player " + player.getName() + 
-                                 " is looping to an ungenerated chunk. Forcing generation at (" + 
-                                 chunkX + ", " + chunkZ + ")...");
-                        
-                        // This is the magic call. It will load OR generate the chunk.
-                        world.loadChunk(chunkX, chunkZ); 
+                        world.loadChunk(chunkX, chunkZ);
                     }
-                    // --- END FIX ---
-                    
-                    // Now it's safe to teleport
                     safeTeleport(player, newLoc);
-
                 } else {
-                    // Your original 'block' logic (no changes needed)
                     Location from = event.getFrom();
                     Location safePos = from.clone();
                     safePos.setX(Math.max(minX, Math.min(maxX, from.getX())));
                     safePos.setZ(Math.max(minZ, Math.min(maxZ, from.getZ())));
-
-                    if (safePos.getX() != from.getX() || safePos.getZ() != from.getZ()) {
-                        safeTeleport(player, safePos);
-                    } else {
-                        safeTeleport(player, from);
-                    }
+                    safeTeleport(player, safePos);
                 }
+            }
+        }
+    }
+
+    // Comando /fill
+    // Sintaxe: /fill <freq> <pad>
+    @Override
+    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+        if (!cmd.getName().equalsIgnoreCase("fill")) return false;
+        int freq = 5; // chunks por tick
+        int pad = 0;
+        if (args.length >= 1) {
+            try { freq = Math.max(1, Integer.parseInt(args[0])); } catch (Exception ignored) {}
+        }
+        if (args.length >= 2) {
+            try { pad = Integer.parseInt(args[1]); } catch (Exception ignored) {}
+        }
+        sender.sendMessage("[BlockyBorder] Pré-geração dos chunks iniciada...");
+        World world = getServer().getWorlds().get(0);
+
+        int cminX = ((int) minX >> 4) - pad, cmaxX = ((int) maxX >> 4) + pad;
+        int cminZ = ((int) minZ >> 4) - pad, cmaxZ = ((int) maxZ >> 4) + pad;
+
+        BukkitScheduler scheduler = getServer().getScheduler();
+        scheduler.scheduleSyncRepeatingTask(this,
+            new FillTask(world, cminX, cmaxX, cminZ, cmaxZ, freq, sender),
+            0L, 1L
+        );
+        return true;
+    }
+
+    class FillTask implements Runnable {
+        private final World world;
+        private final int maxX, minZ, maxZ, freq;
+        private final CommandSender sender;
+        private int curX, curZ;
+        private final int total;
+        private int done;
+
+        FillTask(World w, int minX, int maxX, int minZ, int maxZ, int freq, CommandSender sender) {
+            this.world = w;
+            this.maxX = maxX;
+            this.minZ = minZ;
+            this.maxZ = maxZ;
+            this.freq = freq;
+            this.sender = sender;
+            this.curX = minX; // Só salvo como variável de progresso, não como field extra
+            this.curZ = minZ;
+            this.total = (maxX - minX + 1) * (maxZ - minZ + 1);
+            this.done = 0;
+        }
+        public void run() {
+            int count = 0;
+            while (count < freq && curX <= maxX) {
+                if (curZ > maxZ) { curZ = minZ; curX++; continue; }
+                if (!world.isChunkLoaded(curX, curZ)) { world.loadChunk(curX, curZ); }
+                done++; count++;
+                curZ++;
+            }
+            if (done % 100 == 0) sender.sendMessage("[BlockyBorder] Chunks gerados: " + done + "/" + total);
+            if (curX > maxX) {
+                sender.sendMessage("[BlockyBorder] Pré-geração concluída. Chunks gerados: " + done);
             }
         }
     }
