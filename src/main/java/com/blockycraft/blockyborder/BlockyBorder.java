@@ -55,10 +55,10 @@ public class BlockyBorder extends JavaPlugin {
             try {
                 cfg.setProperty("enabled", "true");
                 cfg.setProperty("loop", "true");
-                cfg.setProperty("x1", "-1000");
-                cfg.setProperty("z1", "-1000");
-                cfg.setProperty("x2", "1000");
-                cfg.setProperty("z2", "1000");
+                cfg.setProperty("x1", "-5333");
+                cfg.setProperty("z1", "-2647");
+                cfg.setProperty("x2", "5291");
+                cfg.setProperty("z2", "2595");
                 cfg.setProperty("buffer", "2.0");
                 FileOutputStream os = new FileOutputStream(configFile);
                 cfg.store(os, "BlockyBorder Config");
