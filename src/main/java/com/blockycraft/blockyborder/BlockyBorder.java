@@ -37,7 +37,6 @@ public class BlockyBorder extends JavaPlugin {
             org.bukkit.event.Event.Priority.Normal,
             this
         );
-
         LOG.info("[BlockyBorder] Enabled. Border is at (" + minX + "," + minZ + ") to (" + maxX + "," + maxZ + "). Loop mode: " + loopEnabled);
         getServer().getScheduler().scheduleSyncRepeatingTask(this, new Runnable() {
             public void run() { borderIgnoreTick(); }
@@ -55,6 +54,7 @@ public class BlockyBorder extends JavaPlugin {
             try {
                 cfg.setProperty("enabled", "true");
                 cfg.setProperty("loop", "true");
+                // Coordenadas corretas:
                 cfg.setProperty("x1", "-5333");
                 cfg.setProperty("z1", "-2647");
                 cfg.setProperty("x2", "5291");
@@ -77,6 +77,7 @@ public class BlockyBorder extends JavaPlugin {
         this.enabled = boolProp("enabled", true);
         this.loopEnabled = boolProp("loop", true);
 
+        // Agora, usa os valores corretos do arquivo
         double x1 = doubleProp("x1", -5333.0);
         double z1 = doubleProp("z1", -2647.0);
         double x2 = doubleProp("x2", 5291.0);
@@ -190,6 +191,7 @@ public class BlockyBorder extends JavaPlugin {
         return true;
     }
 
+    // Task para geração dos chunks (usando Runnable padrão)
     class FillTask implements Runnable {
         private final World world;
         private final int maxX, minZ, maxZ, freq;
@@ -199,17 +201,11 @@ public class BlockyBorder extends JavaPlugin {
         private int done;
 
         FillTask(World w, int minX, int maxX, int minZ, int maxZ, int freq, CommandSender sender) {
-            this.world = w;
-            this.maxX = maxX;
-            this.minZ = minZ;
-            this.maxZ = maxZ;
-            this.freq = freq;
-            this.sender = sender;
-            this.curX = minX; // Só salvo como variável de progresso, não como field extra
-            this.curZ = minZ;
-            this.total = (maxX - minX + 1) * (maxZ - minZ + 1);
-            this.done = 0;
+            this.world = w; this.maxX = maxX; this.minZ = minZ; this.maxZ = maxZ; this.freq = freq; this.sender = sender;
+            this.curX = minX; this.curZ = minZ;
+            this.total = (maxX - minX + 1) * (maxZ - minZ + 1); this.done = 0;
         }
+
         public void run() {
             int count = 0;
             while (count < freq && curX <= maxX) {
