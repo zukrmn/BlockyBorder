@@ -15,7 +15,7 @@ import org.bukkit.event.player.PlayerListener;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
-public class WorldBorderPlugin extends JavaPlugin {
+public class BlockyBorder extends JavaPlugin {
 
     private static final Logger LOG = Logger.getLogger("Minecraft");
     private final PlayerListener playerListener = new BorderPlayerListener();
