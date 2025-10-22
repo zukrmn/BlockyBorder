@@ -19,16 +19,12 @@ public class BlockyBorder extends JavaPlugin {
     private final BorderPlayerListener playerListener = new BorderPlayerListener();
     private Properties cfg = new Properties();
 
-    // Bordas e modo loop
     private boolean enabled;
     private boolean loopEnabled;
     private double minX, maxX, minZ, maxZ;
     private double buffer;
     private static final int IGNORE_TICKS = 3;
     private final Map<UUID, Integer> ignoreBorderTicks = new ConcurrentHashMap<>();
-
-    // Para detecção de ticks travados
-    private volatile long lastTickTime = System.currentTimeMillis();
 
     @Override
     public void onEnable() {
@@ -41,10 +37,8 @@ public class BlockyBorder extends JavaPlugin {
             this
         );
         LOG.info("[BlockyBorder] Enabled. Border is at (" + minX + "," + minZ + ") to (" + maxX + "," + maxZ + "). Loop mode: " + loopEnabled);
-
-        // Ticker de detecção (auxilia FillTask)
         getServer().getScheduler().scheduleSyncRepeatingTask(this, new Runnable() {
-            public void run() { borderIgnoreTick(); lastTickTime = System.currentTimeMillis(); }
+            public void run() { borderIgnoreTick(); }
         }, 1L, 1L);
     }
 
@@ -161,85 +155,69 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    // Comando /fill com freq dinâmica
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!cmd.getName().equalsIgnoreCase("fill")) return false;
-        int freq = 5;
+        World world = getServer().getWorlds().get(0);
         int pad = 0;
         if (args.length >= 1) {
-            try { freq = Math.max(1, Integer.parseInt(args[0])); } catch (Exception ignored) {}
+            try { pad = Integer.parseInt(args[0]); } catch (Exception ignored) {}
         }
-        if (args.length >= 2) {
-            try { pad = Integer.parseInt(args[1]); } catch (Exception ignored) {}
-        }
-        sender.sendMessage("[BlockyBorder] Pré-geração dos chunks iniciada...");
-        World world = getServer().getWorlds().get(0);
 
         int cminX = ((int) minX >> 4) - pad, cmaxX = ((int) maxX >> 4) + pad;
         int cminZ = ((int) minZ >> 4) - pad, cmaxZ = ((int) maxZ >> 4) + pad;
 
         BukkitScheduler scheduler = getServer().getScheduler();
-        scheduler.scheduleSyncRepeatingTask(this,
-            new FillTask(world, cminX, cmaxX, cminZ, cmaxZ, freq, sender), 0L, 1L);
+        int taskId = scheduler.scheduleSyncRepeatingTask(this,
+            new PrePopulateTask(world, cminX, cmaxX, cminZ, cmaxZ, sender), 0L, 2L);
+        PrePopulateTask.setTaskId(taskId);
+        sender.sendMessage("[BlockyBorder] Iniciando geração automática de todo o território!");
         return true;
     }
 
-    // Task otimizada com ajuste automático de batch
-    class FillTask implements Runnable {
+    // Task que percorre todas as faixas Z, automatizando o populate
+    static class PrePopulateTask implements Runnable {
         private final World world;
-        private final int maxX, minZ, maxZ;
+        private final int cminX, cmaxX, cminZ, cmaxZ;
         private final CommandSender sender;
-        private int curX, curZ;
-        private final int total;
-        private int done;
-        private int lastUnloadBatchX;
-        private int freq;
-        private int tickTravaMonitor;
+        private int curZ, curX;
+        private static int taskId = -1;
 
-        FillTask(World w, int minX, int maxX, int minZ, int maxZ, int freq, CommandSender sender) {
-            this.world = w; this.maxX = maxX; this.minZ = minZ; this.maxZ = maxZ;
-            this.sender = sender;
-            this.curX = minX; this.curZ = minZ;
-            this.total = (maxX - minX + 1) * (maxZ - minZ + 1); this.done = 0;
-            this.lastUnloadBatchX = minX;
-            this.freq = freq;
-            this.tickTravaMonitor = 0;
+        public static void setTaskId(int id) { taskId = id; }
+
+        PrePopulateTask(World w, int cminX, int cmaxX, int cminZ, int cmaxZ, CommandSender sender) {
+            this.world = w; this.cminX = cminX; this.cmaxX = cmaxX; this.cminZ = cminZ; this.cmaxZ = cmaxZ; this.sender = sender;
+            this.curZ = cminZ; this.curX = cminX;
         }
 
         public void run() {
-            long agora = System.currentTimeMillis();
-            if (agora - lastTickTime > 1500) {
-                tickTravaMonitor++;
-                if (tickTravaMonitor <= 5 && freq > 1) {
-                    freq = Math.max(1, freq / 2);
-                    sender.sendMessage("[BlockyBorder] Ticks travados detectados! Reduzindo freq para " + freq);
-                }
-            } else {
-                tickTravaMonitor = 0;
+            if (curZ > cmaxZ) {
+                sender.sendMessage("[BlockyBorder] Geração populada COMPLETA em todas as faixas!");
+                Bukkit.getScheduler().cancelTask(taskId);
+                return;
             }
-
-            int count = 0;
-            while (count < freq && curX <= maxX) {
-                if (curZ > maxZ) { curZ = minZ; curX++; continue; }
-                world.loadChunk(curX, curZ);
-                done++; count++;
+            Player fakePlayer = buscaFakePlayerOnline(world);
+            if (fakePlayer == null) {
+                sender.sendMessage("[BlockyBorder] Nenhum jogador online! Execute com pelo menos 1 player.");
+                Bukkit.getScheduler().cancelTask(taskId);
+                return;
+            }
+            if (curX > cmaxX) {
+                curX = cminX;
                 curZ++;
+                return;
             }
-            if (done % 1000 == 0)
-                sender.sendMessage("[BlockyBorder] Chunks gerados: " + done + "/" + total);
-            if (done % 10000 == 0) {
-                for (int x = lastUnloadBatchX; x < curX; x++) {
-                    for (int z = minZ; z <= maxZ; z++) {
-                        world.unloadChunk(x, z, false, false);
-                    }
-                }
-                lastUnloadBatchX = curX;
-            }
+            int blockX = (curX << 4) + 8;
+            int blockZ = (curZ << 4) + 8;
+            Location target = new Location(world, blockX, 200, blockZ);
+            fakePlayer.teleport(target);
+            sender.sendMessage("[BlockyBorder] Populating chunk ("+curX+","+curZ+") via teleport.");
+            curX++;
+        }
 
-            if (curX > maxX) {
-                sender.sendMessage("[BlockyBorder] Pré-geração concluída. Chunks gerados: " + done);
-            }
+        private Player buscaFakePlayerOnline(World w) {
+            for (Player p : w.getPlayers()) return p;
+            return null;
         }
     }
 }
