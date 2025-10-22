@@ -24,8 +24,11 @@ public class BlockyBorder extends JavaPlugin {
     private boolean loopEnabled;
     private double minX, maxX, minZ, maxZ;
     private double buffer;
-    private static final int IGNORE_TICKS = 3; // ticks para ignorar checagem pós-teleporte
+    private static final int IGNORE_TICKS = 3;
     private final Map<UUID, Integer> ignoreBorderTicks = new ConcurrentHashMap<>();
+
+    // Para detecção de ticks travados
+    private volatile long lastTickTime = System.currentTimeMillis();
 
     @Override
     public void onEnable() {
@@ -38,8 +41,10 @@ public class BlockyBorder extends JavaPlugin {
             this
         );
         LOG.info("[BlockyBorder] Enabled. Border is at (" + minX + "," + minZ + ") to (" + maxX + "," + maxZ + "). Loop mode: " + loopEnabled);
+
+        // Ticker de detecção (auxilia FillTask)
         getServer().getScheduler().scheduleSyncRepeatingTask(this, new Runnable() {
-            public void run() { borderIgnoreTick(); }
+            public void run() { borderIgnoreTick(); lastTickTime = System.currentTimeMillis(); }
         }, 1L, 1L);
     }
 
@@ -54,7 +59,6 @@ public class BlockyBorder extends JavaPlugin {
             try {
                 cfg.setProperty("enabled", "true");
                 cfg.setProperty("loop", "true");
-                // Coordenadas corretas:
                 cfg.setProperty("x1", "-5333");
                 cfg.setProperty("z1", "-2647");
                 cfg.setProperty("x2", "5291");
@@ -77,7 +81,6 @@ public class BlockyBorder extends JavaPlugin {
         this.enabled = boolProp("enabled", true);
         this.loopEnabled = boolProp("loop", true);
 
-        // Agora, usa os valores corretos do arquivo
         double x1 = doubleProp("x1", -5333.0);
         double z1 = doubleProp("z1", -2647.0);
         double x2 = doubleProp("x2", 5291.0);
@@ -102,18 +105,16 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    // Teleporte seguro, sempre no topo
     private void safeTeleport(Player player, Location location) {
         World world = location.getWorld();
         int x = location.getBlockX();
         int z = location.getBlockZ();
         int highestY = world.getHighestBlockYAt(x, z);
-        location.setY(highestY + 1.2); // buffer
-        ignoreBorderTicks.put(player.getUniqueId(), IGNORE_TICKS); // ignora por alguns ticks
+        location.setY(highestY + 1.2);
+        ignoreBorderTicks.put(player.getUniqueId(), IGNORE_TICKS);
         player.teleport(location);
     }
 
-    // Tick handler para remover ignorados
     public void borderIgnoreTick() {
         Iterator<Map.Entry<UUID, Integer>> it = ignoreBorderTicks.entrySet().iterator();
         while (it.hasNext()) {
@@ -127,17 +128,15 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    // Listener Corrigido
     private class BorderPlayerListener extends PlayerListener {
         @Override
         public void onPlayerMove(PlayerMoveEvent event) {
             if (!enabled) return;
             Player player = event.getPlayer();
-            if (ignoreBorderTicks.containsKey(player.getUniqueId())) return; // ignora checagem pós-teleporte
+            if (ignoreBorderTicks.containsKey(player.getUniqueId())) return;
 
             Location to = event.getTo();
             double toX = to.getX(), toZ = to.getZ();
-            // Fora da borda?
             if (toX < minX || toX > maxX || toZ < minZ || toZ > maxZ) {
                 if (loopEnabled) {
                     Location newLoc = to.clone();
@@ -149,7 +148,7 @@ public class BlockyBorder extends JavaPlugin {
                     World world = newLoc.getWorld();
                     int chunkX = newLoc.getBlockX() >> 4;
                     int chunkZ = newLoc.getBlockZ() >> 4;
-                    world.loadChunk(chunkX, chunkZ); // otimizado: sempre tenta carregar, sem checar antes
+                    world.loadChunk(chunkX, chunkZ);
                     safeTeleport(player, newLoc);
                 } else {
                     Location from = event.getFrom();
@@ -162,12 +161,11 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    // Comando /fill
-    // Sintaxe: /fill <freq> <pad>
+    // Comando /fill com freq dinâmica
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!cmd.getName().equalsIgnoreCase("fill")) return false;
-        int freq = 5; // chunks por tick
+        int freq = 5;
         int pad = 0;
         if (args.length >= 1) {
             try { freq = Math.max(1, Integer.parseInt(args[0])); } catch (Exception ignored) {}
@@ -183,41 +181,53 @@ public class BlockyBorder extends JavaPlugin {
 
         BukkitScheduler scheduler = getServer().getScheduler();
         scheduler.scheduleSyncRepeatingTask(this,
-            new FillTask(world, cminX, cmaxX, cminZ, cmaxZ, freq, sender),
-            0L, 1L
-        );
+            new FillTask(world, cminX, cmaxX, cminZ, cmaxZ, freq, sender), 0L, 1L);
         return true;
     }
 
-    // Task para geração dos chunks (otimizada)
+    // Task otimizada com ajuste automático de batch
     class FillTask implements Runnable {
         private final World world;
-        private final int maxX, minZ, maxZ, freq;
+        private final int maxX, minZ, maxZ;
         private final CommandSender sender;
         private int curX, curZ;
         private final int total;
         private int done;
         private int lastUnloadBatchX;
+        private int freq;
+        private int tickTravaMonitor;
 
         FillTask(World w, int minX, int maxX, int minZ, int maxZ, int freq, CommandSender sender) {
-            this.world = w; this.maxX = maxX; this.minZ = minZ; this.maxZ = maxZ; this.freq = freq; this.sender = sender;
+            this.world = w; this.maxX = maxX; this.minZ = minZ; this.maxZ = maxZ;
+            this.sender = sender;
             this.curX = minX; this.curZ = minZ;
             this.total = (maxX - minX + 1) * (maxZ - minZ + 1); this.done = 0;
             this.lastUnloadBatchX = minX;
+            this.freq = freq;
+            this.tickTravaMonitor = 0;
         }
 
         public void run() {
+            long agora = System.currentTimeMillis();
+            if (agora - lastTickTime > 1500) {
+                tickTravaMonitor++;
+                if (tickTravaMonitor <= 5 && freq > 1) {
+                    freq = Math.max(1, freq / 2);
+                    sender.sendMessage("[BlockyBorder] Ticks travados detectados! Reduzindo freq para " + freq);
+                }
+            } else {
+                tickTravaMonitor = 0;
+            }
+
             int count = 0;
             while (count < freq && curX <= maxX) {
                 if (curZ > maxZ) { curZ = minZ; curX++; continue; }
-                world.loadChunk(curX, curZ); // remove isChunkLoaded p/ reduzir syscalls
+                world.loadChunk(curX, curZ);
                 done++; count++;
                 curZ++;
             }
             if (done % 1000 == 0)
                 sender.sendMessage("[BlockyBorder] Chunks gerados: " + done + "/" + total);
-
-            // OPCIONAL: liberar chunks antigos do cache se RAM subir muito (tune conforme sua demanda)
             if (done % 10000 == 0) {
                 for (int x = lastUnloadBatchX; x < curX; x++) {
                     for (int z = minZ; z <= maxZ; z++) {
@@ -226,6 +236,7 @@ public class BlockyBorder extends JavaPlugin {
                 }
                 lastUnloadBatchX = curX;
             }
+
             if (curX > maxX) {
                 sender.sendMessage("[BlockyBorder] Pré-geração concluída. Chunks gerados: " + done);
             }
