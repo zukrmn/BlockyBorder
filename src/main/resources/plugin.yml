@@ -1,0 +1,5 @@
+name: WorldBorder
+main: com.blockycraft.blockyborder
+version: 1.0
+author: Bernardo Zukerman
+description: Sistema de borda contínua e pré-carregamento de chunks para o BlockyCRAFT
