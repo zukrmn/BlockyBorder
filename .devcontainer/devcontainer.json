@@ -1,0 +1,39 @@
+{
+  "name": "Java 8 (OpenJDK) com Maven",
+  "image": "mcr.microsoft.com/devcontainers/java:8",
+
+  // =========================================================
+  // Adiciona a montagem da pasta do servidor
+  // =========================================================
+  "mounts": [
+    {
+      // Fonte no Windows: A pasta raiz do seu servidor Minecraft
+      "source": "C:\\Users\\Bernardo Andrade\\Documents\\BlockyCRAFT",
+      // Alvo no Contêiner: Um caminho de fácil acesso
+      "target": "/minecraft-server",
+      "type": "bind"
+    }
+  ],
+  // =========================================================
+
+  "features": {
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "8",
+      "installMaven": "true"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.shell.linux": "/bin/bash"
+      },
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "vscjava.vscode-maven",
+        "redhat.vscode-xml"
+      ]
+    }
+  },
+  "remoteUser": "vscode"
+}
