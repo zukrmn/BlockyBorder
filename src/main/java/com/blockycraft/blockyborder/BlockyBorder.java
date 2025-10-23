@@ -33,13 +33,14 @@ public class BlockyBorder extends JavaPlugin {
     private boolean isFilling = false; 
 
     // --- Constantes para Polimento ---
-    private static final int DEFAULT_FILL_FREQ = 3;
+    private static final int DEFAULT_FILL_FREQ = 5;
     private static final int DEFAULT_FILL_PAD = 0;
-    private static final int DEFAULT_FILL_STEP = 20000;
+    private static final int DEFAULT_FILL_STEP = 40000;
     private static final int TASK_START_DELAY_TICKS = 20; // 1 segundo
     private static final int TASK_REPEAT_TICKS = 1;
     private static final int LOG_FREQUENCY = 1000;
-    private static final int SHUTDOWN_DELAY_TICKS = 100; // 5 segundos
+    private static final int SHUTDOWN_SAVE_DELAY_TICKS = 20; // 1 segundo (Delay ANTES de salvar)
+    private static final int SHUTDOWN_FINAL_DELAY_TICKS = 100; // 5 segundos (Delay DEPOIS de salvar)
 
     public void onEnable() {
         getDataFolder().mkdirs();
@@ -170,10 +171,6 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    /**
-     * Inicia ou continua uma tarefa de preenchimento.
-     * @param jobProps Propriedades da tarefa (lidas do arquivo ou novas)
-     */
     private void startFillTask(Properties jobProps) {
         World world = getServer().getWorlds().get(0);
 
@@ -188,8 +185,6 @@ public class BlockyBorder extends JavaPlugin {
         int curZ = Integer.parseInt(jobProps.getProperty("curZ"));
         int done = Integer.parseInt(jobProps.getProperty("done"));
         int currentStep = Integer.parseInt(jobProps.getProperty("currentStep"));
-        
-        // --- CORREÇÃO DE CRASH (thisStep) ---
         int thisStep = Integer.parseInt(jobProps.getProperty("thisStep", "0"));
 
         this.isFilling = true;
@@ -220,7 +215,8 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    private void saveFillJob(Properties jobProps) {
+    // Método 'saveFillJob' agora é public para ser acessado pela ShutdownTask
+    public void saveFillJob(Properties jobProps) {
         try (FileOutputStream fos = new FileOutputStream(fillJobFile)) {
             jobProps.store(fos, "BlockyBorder Fill Job State");
         } catch (Exception e) {
@@ -269,8 +265,6 @@ public class BlockyBorder extends JavaPlugin {
         jobProps.setProperty("curZ", String.valueOf(cminZ)); 
         jobProps.setProperty("done", "0"); 
         jobProps.setProperty("currentStep", "1"); 
-        
-        // --- CORREÇÃO DE CRASH (thisStep) ---
         jobProps.setProperty("thisStep", "0"); 
 
         saveFillJob(jobProps);
@@ -293,7 +287,6 @@ public class BlockyBorder extends JavaPlugin {
         private int logCounter = 0;
         private int taskId;
 
-        // --- CORREÇÃO DE CRASH (thisStep) ---
         FillStepTask(World w, Properties jobProps, int maxX, int minZ, int maxZ, int freq, int step, int total, int totalSteps, int curX, int curZ, int done, int currentStep, int thisStep) {
             this.world = w;
             this.jobProps = jobProps; 
@@ -308,7 +301,7 @@ public class BlockyBorder extends JavaPlugin {
             this.curZ = curZ;
             this.done = done;
             this.currentStep = currentStep;
-            this.thisStep = thisStep; // Recebe o progresso do step salvo
+            this.thisStep = thisStep; 
         }
 
         public void setTaskId(int id) { this.taskId = id; }
@@ -338,15 +331,11 @@ public class BlockyBorder extends JavaPlugin {
                 }
             }
 
-            // --- CORREÇÃO DE CRASH (thisStep) ---
-            // Salva o progresso a CADA TICK
             this.jobProps.setProperty("curX", String.valueOf(this.curX));
             this.jobProps.setProperty("curZ", String.valueOf(this.curZ));
             this.jobProps.setProperty("done", String.valueOf(this.done));
-            this.jobProps.setProperty("thisStep", String.valueOf(this.thisStep)); // Salva o progresso do step
+            this.jobProps.setProperty("thisStep", String.valueOf(this.thisStep));
             BlockyBorder.this.saveFillJob(this.jobProps);
-
-            // --- Verificação de Conclusão ---
 
             // 1. O TRABALHO INTEIRO TERMINOU?
             if (this.curX > this.maxX || this.done >= this.total) {
@@ -360,41 +349,68 @@ public class BlockyBorder extends JavaPlugin {
             }
 
             // 2. ESTE STEP TERMINOU (E O TRABALHO AINDA NÃO)?
+            // --- INÍCIO DA CORREÇÃO DA RACE CONDITION ---
             if (thisStep >= step) {
                 LOG.info("[BlockyBorder] Fim do step " + this.currentStep + "/" + this.totalSteps + ".");
-                
-                // --- CORREÇÃO DE REINÍCIO (Shutdown Gracioso) ---
+                LOG.info("[BlockyBorder] Agendando reinício gracioso...");
 
-                // 1. Prepara o arquivo de job para o *próximo* step
-                this.currentStep++;
-                this.jobProps.setProperty("currentStep", String.valueOf(this.currentStep));
-                this.jobProps.setProperty("thisStep", "0"); // Reseta o progresso do step
-                
-                // 2. Força o salvamento de tudo que está na memória
-                LOG.info("[BlockyBorder] Forçando salvamento de todos os mundos e jogadores...");
-                Bukkit.getServer().savePlayers();
-                for (World w : Bukkit.getServer().getWorlds()) {
-                    w.save();
-                }
-                LOG.info("[BlockyBorder] Salvamento completo. Desligando em 5 segundos...");
-
-                // 3. Salva o arquivo de job (agora que o mundo está salvo)
-                BlockyBorder.this.saveFillJob(this.jobProps);
-
-                // 4. Cancela esta task
+                // 1. Para esta task de geração IMEDIATAMENTE.
                 BlockyBorder.this.isFilling = false;
                 Bukkit.getScheduler().cancelTask(this.taskId);
 
-                // 5. Agenda o desligamento com atraso para dar tempo aos I/O
-                Bukkit.getScheduler().scheduleSyncDelayedTask(BlockyBorder.this, new Runnable() {
-                    public void run() {
-                        LOG.info("[BlockyBorder] Desligando agora para reiniciar.");
-                        Bukkit.getServer().shutdown();
-                    }
-                }, SHUTDOWN_DELAY_TICKS);
+                // 2. Agenda uma NOVA TAREFA ÚNICA para cuidar do desligamento.
+                // Isso dá 1 segundo (20 ticks) para o servidor "respirar" e
+                // terminar de processar o último tick de geração.
+                Bukkit.getScheduler().scheduleSyncDelayedTask(BlockyBorder.this, 
+                    new ShutdownTask(BlockyBorder.this, this.jobProps, this.currentStep + 1), 
+                    SHUTDOWN_SAVE_DELAY_TICKS); // Espera 1 segundo
                 
-                return; // Importante: para a execução desta task
+                return; // Para a FillStepTask
             }
+            // --- FIM DA CORREÇÃO ---
+        }
+    }
+
+    /**
+     * Nova classe dedicada para cuidar do desligamento gracioso.
+     * Isso roda DEPOIS que a FillStepTask foi cancelada.
+     */
+    class ShutdownTask implements Runnable {
+        private final BlockyBorder plugin;
+        private final Properties jobProps;
+        private final int nextStep;
+
+        ShutdownTask(BlockyBorder plugin, Properties jobProps, int nextStep) {
+            this.plugin = plugin;
+            this.jobProps = jobProps;
+            this.nextStep = nextStep;
+        }
+
+        public void run() {
+            LOG.info("[BlockyBorder] ShutdownTask: Iniciando processo de reinício.");
+
+            // 1. Prepara o arquivo de job para o *próximo* step
+            this.jobProps.setProperty("currentStep", String.valueOf(this.nextStep));
+            this.jobProps.setProperty("thisStep", "0"); // Reseta o progresso do step
+
+            // 2. Força o salvamento de tudo que está na memória
+            LOG.info("[BlockyBorder] ShutdownTask: Forçando salvamento de todos os mundos e jogadores...");
+            Bukkit.getServer().savePlayers();
+            for (World w : Bukkit.getServer().getWorlds()) {
+                w.save();
+            }
+            
+            // 3. Salva o arquivo de job (agora que o mundo está salvo)
+            this.plugin.saveFillJob(this.jobProps);
+            LOG.info("[BlockyBorder] ShutdownTask: Salvamento completo. Desligando em 5 segundos...");
+
+            // 4. Agenda o desligamento final com um delay
+            this.plugin.getServer().getScheduler().scheduleSyncDelayedTask(this.plugin, new Runnable() {
+                public void run() {
+                    LOG.info("[BlockyBorder] ShutdownTask: Desligando agora.");
+                    Bukkit.getServer().shutdown();
+                }
+            }, SHUTDOWN_FINAL_DELAY_TICKS); // Espera 5 segundos
         }
     }
 }
