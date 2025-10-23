@@ -33,9 +33,9 @@ public class BlockyBorder extends JavaPlugin {
     private boolean isFilling = false; 
 
     // --- Constantes para Polimento ---
-    private static final int DEFAULT_FILL_FREQ = 5;
+    private static final int DEFAULT_FILL_FREQ = 3;
     private static final int DEFAULT_FILL_PAD = 0;
-    private static final int DEFAULT_FILL_STEP = 40000;
+    private static final int DEFAULT_FILL_STEP = 20000;
     private static final int TASK_START_DELAY_TICKS = 20; // 1 segundo
     private static final int TASK_REPEAT_TICKS = 1;
     private static final int LOG_FREQUENCY = 1000;
