@@ -41,6 +41,9 @@ public class BlockyBorder extends JavaPlugin {
     private static final int LOG_FREQUENCY = 1000;
     private static final int SHUTDOWN_SAVE_DELAY_TICKS = 20; // 1 segundo (Delay ANTES de salvar)
     private static final int SHUTDOWN_FINAL_DELAY_TICKS = 100; // 5 segundos (Delay DEPOIS de salvar)
+    
+    // --- SUA IDEIA DE OVERLAP ---
+    private static final int STEP_OVERLAP_COLUMNS = 10; // "Rebobina" 10 colunas (Chunks no eixo X)
 
     public void onEnable() {
         getDataFolder().mkdirs();
@@ -215,7 +218,6 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    // Método 'saveFillJob' agora é public para ser acessado pela ShutdownTask
     public void saveFillJob(Properties jobProps) {
         try (FileOutputStream fos = new FileOutputStream(fillJobFile)) {
             jobProps.store(fos, "BlockyBorder Fill Job State");
@@ -276,9 +278,6 @@ public class BlockyBorder extends JavaPlugin {
     }
 
 
-    /**
-     * Tarefa de preenchimento com desligamento gracioso e à prova de crash.
-     */
     class FillStepTask implements Runnable {
         private final World world;
         private final Properties jobProps;
@@ -349,31 +348,25 @@ public class BlockyBorder extends JavaPlugin {
             }
 
             // 2. ESTE STEP TERMINOU (E O TRABALHO AINDA NÃO)?
-            // --- INÍCIO DA CORREÇÃO DA RACE CONDITION ---
             if (thisStep >= step) {
                 LOG.info("[BlockyBorder] Fim do step " + this.currentStep + "/" + this.totalSteps + ".");
-                LOG.info("[BlockyBorder] Agendando reinício gracioso...");
+                LOG.info("[BlockyBorder] Agendando reinício gracioso com sobreposição (overlap)...");
 
-                // 1. Para esta task de geração IMEDIATAMENTE.
                 BlockyBorder.this.isFilling = false;
                 Bukkit.getScheduler().cancelTask(this.taskId);
 
-                // 2. Agenda uma NOVA TAREFA ÚNICA para cuidar do desligamento.
-                // Isso dá 1 segundo (20 ticks) para o servidor "respirar" e
-                // terminar de processar o último tick de geração.
                 Bukkit.getScheduler().scheduleSyncDelayedTask(BlockyBorder.this, 
                     new ShutdownTask(BlockyBorder.this, this.jobProps, this.currentStep + 1), 
                     SHUTDOWN_SAVE_DELAY_TICKS); // Espera 1 segundo
                 
-                return; // Para a FillStepTask
+                return; 
             }
-            // --- FIM DA CORREÇÃO ---
         }
     }
 
     /**
      * Nova classe dedicada para cuidar do desligamento gracioso.
-     * Isso roda DEPOIS que a FillStepTask foi cancelada.
+     * AGORA TAMBÉM INCLUI A LÓGICA DE SOBREPOSIÇÃO (OVERLAP).
      */
     class ShutdownTask implements Runnable {
         private final BlockyBorder plugin;
@@ -389,22 +382,45 @@ public class BlockyBorder extends JavaPlugin {
         public void run() {
             LOG.info("[BlockyBorder] ShutdownTask: Iniciando processo de reinício.");
 
-            // 1. Prepara o arquivo de job para o *próximo* step
+            // --- LÓGICA DE SOBREPOSIÇÃO (OVERLAP) ---
+            int curX = Integer.parseInt(this.jobProps.getProperty("curX"));
+            int cminX = Integer.parseInt(this.jobProps.getProperty("cminX"));
+            int cminZ = Integer.parseInt(this.jobProps.getProperty("cminZ"));
+
+            // 1. Calcula o novo X "rebobinado"
+            int newCurX = curX - STEP_OVERLAP_COLUMNS;
+            
+            // 2. Garante que não "rebobinou" para antes do início do mapa
+            if (newCurX < cminX) {
+                newCurX = cminX;
+            }
+
+            LOG.info("[BlockyBorder] ShutdownTask: Rebobinando " + (curX - newCurX) + " colunas para sobreposição.");
+            LOG.info("[BlockyBorder] ShutdownTask: Próximo step começará em X=" + newCurX + " Z=" + cminZ);
+
+            // 3. Prepara o arquivo de job para o *próximo* step com as coordenadas rebobinadas
             this.jobProps.setProperty("currentStep", String.valueOf(this.nextStep));
             this.jobProps.setProperty("thisStep", "0"); // Reseta o progresso do step
+            this.jobProps.setProperty("curX", String.valueOf(newCurX)); // Define o X rebobinado
+            this.jobProps.setProperty("curZ", String.valueOf(cminZ)); // Reseta o Z para o início da coluna
+            
+            // Nota: Não ajustamos o 'done'. A contagem de progresso ficará um pouco inflada,
+            // mas isso é inofensivo e garante a correção da "costura".
 
-            // 2. Força o salvamento de tudo que está na memória
+            // --- FIM DA LÓGICA DE SOBREPOSIÇÃO ---
+
+            // 4. Força o salvamento de tudo que está na memória
             LOG.info("[BlockyBorder] ShutdownTask: Forçando salvamento de todos os mundos e jogadores...");
             Bukkit.getServer().savePlayers();
             for (World w : Bukkit.getServer().getWorlds()) {
                 w.save();
             }
             
-            // 3. Salva o arquivo de job (agora que o mundo está salvo)
+            // 5. Salva o arquivo de job (agora que o mundo está salvo E com o overlap)
             this.plugin.saveFillJob(this.jobProps);
             LOG.info("[BlockyBorder] ShutdownTask: Salvamento completo. Desligando em 5 segundos...");
 
-            // 4. Agenda o desligamento final com um delay
+            // 6. Agenda o desligamento final com um delay
             this.plugin.getServer().getScheduler().scheduleSyncDelayedTask(this.plugin, new Runnable() {
                 public void run() {
                     LOG.info("[BlockyBorder] ShutdownTask: Desligando agora.");
