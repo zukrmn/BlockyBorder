@@ -29,14 +29,22 @@ public class BlockyBorder extends JavaPlugin {
     private static final int IGNORE_TICKS = 3;
     private final Map<UUID, Integer> ignoreBorderTicks = new ConcurrentHashMap<>();
 
-    // --- Variáveis de estado do Job ---
     private File fillJobFile;
-    private boolean isFilling = false; // Trava para impedir /fill concorrente
+    private boolean isFilling = false; 
+
+    // --- Constantes para Polimento ---
+    private static final int DEFAULT_FILL_FREQ = 5;
+    private static final int DEFAULT_FILL_PAD = 0;
+    private static final int DEFAULT_FILL_STEP = 40000;
+    private static final int TASK_START_DELAY_TICKS = 20; // 1 segundo
+    private static final int TASK_REPEAT_TICKS = 1;
+    private static final int LOG_FREQUENCY = 1000;
+    private static final int SHUTDOWN_DELAY_TICKS = 100; // 5 segundos
 
     public void onEnable() {
         getDataFolder().mkdirs();
-        loadConfig(); // Carrega config.properties da borda
-        fillJobFile = new File(getDataFolder(), "fill_job.properties"); // Arquivo de estado do trabalho
+        loadConfig(); 
+        fillJobFile = new File(getDataFolder(), "fill_job.properties"); 
 
         getServer().getPluginManager().registerEvent(Event.Type.PLAYER_MOVE, (Listener)this.playerListener, Event.Priority.Normal, (Plugin)this);
         LOG.info("[BlockyBorder] Enabled. Border is at (" + this.minX + "," + this.minZ + ") to (" + this.maxX + "," + this.maxZ + "). Loop mode: " + this.loopEnabled);
@@ -45,7 +53,6 @@ public class BlockyBorder extends JavaPlugin {
             public void run() { BlockyBorder.this.borderIgnoreTick(); }
         }, 1L, 1L);
 
-        // --- Lógica de Auto-Resume ---
         resumeFillJob();
     }
 
@@ -59,12 +66,10 @@ public class BlockyBorder extends JavaPlugin {
             try {
                 this.cfg.setProperty("enabled", "true");
                 this.cfg.setProperty("loop", "true");
-                // --- COORDENADAS ATUALIZADAS AQUI ---
                 this.cfg.setProperty("x1", "-5376");
                 this.cfg.setProperty("z1", "-2688");
                 this.cfg.setProperty("x2", "5376");
                 this.cfg.setProperty("z2", "2688");
-                // --- FIM DA ATUALIZAÇÃO ---
                 this.cfg.setProperty("buffer", "2.0");
                 FileOutputStream os = new FileOutputStream(configFile);
                 this.cfg.store(os, "BlockyBorder Config");
@@ -81,12 +86,8 @@ public class BlockyBorder extends JavaPlugin {
         }
         this.enabled = boolProp("enabled", true);
         this.loopEnabled = boolProp("loop", true);
-        
-        // --- VALORES DE FALLBACK ATUALIZADOS AQUI ---
         double x1 = doubleProp("x1", -5376.0D), z1 = doubleProp("z1", -2688.0D);
         double x2 = doubleProp("x2", 5376.0D), z2 = doubleProp("z2", 2688.0D);
-        // --- FIM DA ATUALIZAÇÃO ---
-
         this.minX = Math.min(x1, x2);
         this.maxX = Math.max(x1, x2);
         this.minZ = Math.min(z1, z2);
@@ -107,15 +108,12 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    // --- Listener de Borda ---
     private void safeTeleport(Player player, Location location) {
         World world = location.getWorld();
         int x = location.getBlockX(), z = location.getBlockZ();
         int highestY = world.getHighestBlockYAt(x, z);
         location.setY(highestY + 1.2D);
-        
         this.ignoreBorderTicks.put(player.getUniqueId(), Integer.valueOf(BlockyBorder.IGNORE_TICKS));
-        
         forcePopulate(world, x >> 4, z >> 4);
         player.teleport(location);
     }
@@ -135,15 +133,12 @@ public class BlockyBorder extends JavaPlugin {
 
     private void forcePopulate(World world, int chunkX, int chunkZ) {
         Chunk c = world.getChunkAt(chunkX, chunkZ); 
-
         if (c == null) {
             LOG.warning("[BlockyBorder] Falha ao carregar/gerar chunk em " + chunkX + "," + chunkZ);
             return; 
         }
-        
         Random rand = new Random(world.getSeed());
         rand.setSeed(chunkX * 341873128712L + chunkZ * 132897987541L);
-        
         for (BlockPopulator pop : world.getPopulators()) {
             pop.populate(world, rand, c);
         }
@@ -165,7 +160,6 @@ public class BlockyBorder extends JavaPlugin {
                     else if (toX > BlockyBorder.this.maxX) newLoc.setX(BlockyBorder.this.minX + BlockyBorder.this.buffer);
                     if (toZ < BlockyBorder.this.minZ) newLoc.setZ(BlockyBorder.this.maxZ - BlockyBorder.this.buffer);
                     else if (toZ > BlockyBorder.this.maxZ) newLoc.setZ(BlockyBorder.this.minZ + BlockyBorder.this.buffer);
-
                     BlockyBorder.this.safeTeleport(player, newLoc);
                 } else {
                     Location from = event.getFrom(), safePos = from.clone();
@@ -175,8 +169,6 @@ public class BlockyBorder extends JavaPlugin {
                 }
         }
     }
-    // --- Fim do Listener de Borda ---
-
 
     /**
      * Inicia ou continua uma tarefa de preenchimento.
@@ -185,7 +177,6 @@ public class BlockyBorder extends JavaPlugin {
     private void startFillTask(Properties jobProps) {
         World world = getServer().getWorlds().get(0);
 
-        // Extrai todos os parâmetros do jobProps
         int freq = Integer.parseInt(jobProps.getProperty("freq"));
         int step = Integer.parseInt(jobProps.getProperty("step"));
         int cmaxX = Integer.parseInt(jobProps.getProperty("cmaxX"));
@@ -197,20 +188,20 @@ public class BlockyBorder extends JavaPlugin {
         int curZ = Integer.parseInt(jobProps.getProperty("curZ"));
         int done = Integer.parseInt(jobProps.getProperty("done"));
         int currentStep = Integer.parseInt(jobProps.getProperty("currentStep"));
+        
+        // --- CORREÇÃO DE CRASH (thisStep) ---
+        int thisStep = Integer.parseInt(jobProps.getProperty("thisStep", "0"));
 
         this.isFilling = true;
         
-        FillStepTask fillTask = new FillStepTask(world, jobProps, cmaxX, cminZ, cmaxZ, freq, step, total, totalSteps, curX, curZ, done, currentStep);
-        int taskId = getServer().getScheduler().scheduleSyncRepeatingTask(this, fillTask, 20L, 1L); // 20L = delay de 1 seg para iniciar
+        FillStepTask fillTask = new FillStepTask(world, jobProps, cmaxX, cminZ, cmaxZ, freq, step, total, totalSteps, curX, curZ, done, currentStep, thisStep);
+        int taskId = getServer().getScheduler().scheduleSyncRepeatingTask(this, fillTask, TASK_START_DELAY_TICKS, TASK_REPEAT_TICKS);
         fillTask.setTaskId(taskId);
     }
 
-    /**
-     * Tenta resumir um trabalho de preenchimento ao iniciar o plugin.
-     */
     private void resumeFillJob() {
         if (!fillJobFile.exists()) {
-            return; // Nenhum trabalho para resumir
+            return; 
         }
 
         Properties jobProps = new Properties();
@@ -229,9 +220,6 @@ public class BlockyBorder extends JavaPlugin {
         }
     }
 
-    /**
-     * Salva o estado atual do trabalho no arquivo .properties
-     */
     private void saveFillJob(Properties jobProps) {
         try (FileOutputStream fos = new FileOutputStream(fillJobFile)) {
             jobProps.store(fos, "BlockyBorder Fill Job State");
@@ -251,8 +239,7 @@ public class BlockyBorder extends JavaPlugin {
             return true;
         }
 
-        // Parâmetros do comando
-        int freq = 5, pad = 0, step = 40000;
+        int freq = DEFAULT_FILL_FREQ, pad = DEFAULT_FILL_PAD, step = DEFAULT_FILL_STEP;
         if (args.length >= 1)
             try { freq = Math.max(1, Integer.parseInt(args[0])); } catch (Exception ignored) {}
         if (args.length >= 2)
@@ -260,16 +247,13 @@ public class BlockyBorder extends JavaPlugin {
         if (args.length >= 3)
             try { step = Math.max(freq, Integer.parseInt(args[2])); } catch (Exception ignored) {}
 
-        // Coordenadas do Mundo
         int cminX = ((int)this.minX >> 4) - pad, cmaxX = ((int)this.maxX >> 4) + pad;
         int cminZ = ((int)this.minZ >> 4) - pad, cmaxZ = ((int)this.maxZ >> 4) + pad;
 
-        // Cálculos Iniciais
         int total = (cmaxX - cminX + 1) * (cmaxZ - cminZ + 1);
         int totalSteps = (int)Math.ceil((double)total / step);
         if (totalSteps == 0) totalSteps = 1;
 
-        // Criar o novo arquivo de properties do Job
         Properties jobProps = new Properties();
         jobProps.setProperty("running", "true");
         jobProps.setProperty("freq", String.valueOf(freq));
@@ -281,12 +265,14 @@ public class BlockyBorder extends JavaPlugin {
         jobProps.setProperty("cmaxZ", String.valueOf(cmaxZ));
         jobProps.setProperty("total", String.valueOf(total));
         jobProps.setProperty("totalSteps", String.valueOf(totalSteps));
-        jobProps.setProperty("curX", String.valueOf(cminX)); // Começa do início
-        jobProps.setProperty("curZ", String.valueOf(cminZ)); // Começa do início
-        jobProps.setProperty("done", "0"); // Começa do zero
-        jobProps.setProperty("currentStep", "1"); // Começa do step 1
+        jobProps.setProperty("curX", String.valueOf(cminX)); 
+        jobProps.setProperty("curZ", String.valueOf(cminZ)); 
+        jobProps.setProperty("done", "0"); 
+        jobProps.setProperty("currentStep", "1"); 
+        
+        // --- CORREÇÃO DE CRASH (thisStep) ---
+        jobProps.setProperty("thisStep", "0"); 
 
-        // Salva e inicia
         saveFillJob(jobProps);
         sender.sendMessage("§a[BlockyBorder] Iniciando pré-geração automática.");
         sender.sendMessage("§aTotal de " + total + " chunks em " + totalSteps + " steps de " + step + " chunks.");
@@ -297,19 +283,20 @@ public class BlockyBorder extends JavaPlugin {
 
 
     /**
-     * Tarefa de preenchimento modificada para auto-restart e correções
+     * Tarefa de preenchimento com desligamento gracioso e à prova de crash.
      */
     class FillStepTask implements Runnable {
         private final World world;
-        private final Properties jobProps; // Mantém o estado atual
+        private final Properties jobProps;
         private final int maxX, minZ, maxZ, freq, step, total, totalSteps;
         private int curX, curZ, done, thisStep, currentStep;
-        private int logCounter = 0; // Contador para log a cada 1000
+        private int logCounter = 0;
         private int taskId;
 
-        FillStepTask(World w, Properties jobProps, int maxX, int minZ, int maxZ, int freq, int step, int total, int totalSteps, int curX, int curZ, int done, int currentStep) {
+        // --- CORREÇÃO DE CRASH (thisStep) ---
+        FillStepTask(World w, Properties jobProps, int maxX, int minZ, int maxZ, int freq, int step, int total, int totalSteps, int curX, int curZ, int done, int currentStep, int thisStep) {
             this.world = w;
-            this.jobProps = jobProps; // Referência direta
+            this.jobProps = jobProps; 
             this.maxX = maxX;
             this.minZ = minZ;
             this.maxZ = maxZ;
@@ -321,7 +308,7 @@ public class BlockyBorder extends JavaPlugin {
             this.curZ = curZ;
             this.done = done;
             this.currentStep = currentStep;
-            this.thisStep = 0; // Chunks feitos *neste step*
+            this.thisStep = thisStep; // Recebe o progresso do step salvo
         }
 
         public void setTaskId(int id) { this.taskId = id; }
@@ -344,17 +331,19 @@ public class BlockyBorder extends JavaPlugin {
                 this.thisStep++;
                 this.logCounter++;
 
-                if (this.logCounter >= 1000) {
+                if (this.logCounter >= LOG_FREQUENCY) {
                     double percent = (double)this.done / this.total * 100.0;
                     LOG.info(String.format("[BlockyBorder] Progresso: %d / %d chunks (%.2f%%)", this.done, this.total, percent));
                     this.logCounter = 0;
                 }
             }
 
-            // Salva o progresso deste tick (curX, curZ, done)
+            // --- CORREÇÃO DE CRASH (thisStep) ---
+            // Salva o progresso a CADA TICK
             this.jobProps.setProperty("curX", String.valueOf(this.curX));
             this.jobProps.setProperty("curZ", String.valueOf(this.curZ));
             this.jobProps.setProperty("done", String.valueOf(this.done));
+            this.jobProps.setProperty("thisStep", String.valueOf(this.thisStep)); // Salva o progresso do step
             BlockyBorder.this.saveFillJob(this.jobProps);
 
             // --- Verificação de Conclusão ---
@@ -363,9 +352,9 @@ public class BlockyBorder extends JavaPlugin {
             if (this.curX > this.maxX || this.done >= this.total) {
                 LOG.info("[BlockyBorder] Mapa completo! Todos os " + this.total + " chunks foram gerados.");
                 if (BlockyBorder.this.fillJobFile.exists()) {
-                    BlockyBorder.this.fillJobFile.delete(); // Limpa o arquivo do job
+                    BlockyBorder.this.fillJobFile.delete(); 
                 }
-                BlockyBorder.this.isFilling = false; // Destrava
+                BlockyBorder.this.isFilling = false; 
                 Bukkit.getScheduler().cancelTask(this.taskId);
                 return;
             }
@@ -374,15 +363,37 @@ public class BlockyBorder extends JavaPlugin {
             if (thisStep >= step) {
                 LOG.info("[BlockyBorder] Fim do step " + this.currentStep + "/" + this.totalSteps + ".");
                 
-                this.currentStep++; // Prepara para o próximo step
-                this.jobProps.setProperty("currentStep", String.valueOf(this.currentStep));
-                BlockyBorder.this.saveFillJob(this.jobProps); // Salva o incremento do step
+                // --- CORREÇÃO DE REINÍCIO (Shutdown Gracioso) ---
 
-                LOG.info("[BlockFBorder] Reiniciando o servidor para continuar no próximo step...");
-                BlockyBorder.this.isFilling = false; // Destrava (para o próximo onEnable)
+                // 1. Prepara o arquivo de job para o *próximo* step
+                this.currentStep++;
+                this.jobProps.setProperty("currentStep", String.valueOf(this.currentStep));
+                this.jobProps.setProperty("thisStep", "0"); // Reseta o progresso do step
+                
+                // 2. Força o salvamento de tudo que está na memória
+                LOG.info("[BlockyBorder] Forçando salvamento de todos os mundos e jogadores...");
+                Bukkit.getServer().savePlayers();
+                for (World w : Bukkit.getServer().getWorlds()) {
+                    w.save();
+                }
+                LOG.info("[BlockyBorder] Salvamento completo. Desligando em 5 segundos...");
+
+                // 3. Salva o arquivo de job (agora que o mundo está salvo)
+                BlockyBorder.this.saveFillJob(this.jobProps);
+
+                // 4. Cancela esta task
+                BlockyBorder.this.isFilling = false;
                 Bukkit.getScheduler().cancelTask(this.taskId);
 
-                Bukkit.getServer().shutdown();
+                // 5. Agenda o desligamento com atraso para dar tempo aos I/O
+                Bukkit.getScheduler().scheduleSyncDelayedTask(BlockyBorder.this, new Runnable() {
+                    public void run() {
+                        LOG.info("[BlockyBorder] Desligando agora para reiniciar.");
+                        Bukkit.getServer().shutdown();
+                    }
+                }, SHUTDOWN_DELAY_TICKS);
+                
+                return; // Importante: para a execução desta task
             }
         }
     }
