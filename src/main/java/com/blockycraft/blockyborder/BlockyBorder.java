@@ -29,21 +29,15 @@ public class BlockyBorder extends JavaPlugin {
     private static final int IGNORE_TICKS = 3;
     private final Map<UUID, Integer> ignoreBorderTicks = new ConcurrentHashMap<>();
 
-    private File fillJobFile;
+    private File fillJobFile; // Usado para salvar progresso e resumir
     private boolean isFilling = false; 
 
-    // --- Constantes para Polimento ---
+    // --- Constantes Simplificadas ---
     private static final int DEFAULT_FILL_FREQ = 5;
     private static final int DEFAULT_FILL_PAD = 0;
-    private static final int DEFAULT_FILL_STEP = 40000;
-    private static final int TASK_START_DELAY_TICKS = 20; // 1 segundo
+    private static final int TASK_START_DELAY_TICKS = 20;
     private static final int TASK_REPEAT_TICKS = 1;
     private static final int LOG_FREQUENCY = 1000;
-    private static final int SHUTDOWN_SAVE_DELAY_TICKS = 20; // 1 segundo (Delay ANTES de salvar)
-    private static final int SHUTDOWN_FINAL_DELAY_TICKS = 100; // 5 segundos (Delay DEPOIS de salvar)
-    
-    // --- SUA IDEIA DE OVERLAP ---
-    private static final int STEP_OVERLAP_COLUMNS = 10; // "Rebobina" 10 colunas (Chunks no eixo X)
 
     public void onEnable() {
         getDataFolder().mkdirs();
@@ -57,6 +51,7 @@ public class BlockyBorder extends JavaPlugin {
             public void run() { BlockyBorder.this.borderIgnoreTick(); }
         }, 1L, 1L);
 
+        // Resume automaticamente se o servidor crashar
         resumeFillJob();
     }
 
@@ -152,6 +147,7 @@ public class BlockyBorder extends JavaPlugin {
     private class BorderPlayerListener extends PlayerListener {
         private BorderPlayerListener() {}
         public void onPlayerMove(PlayerMoveEvent event) {
+            // ... (Código do Listener é o mesmo, sem alterações) ...
             if (!BlockyBorder.this.enabled) return;
             Player player = event.getPlayer();
             if (BlockyBorder.this.ignoreBorderTicks.containsKey(player.getUniqueId())) return;
@@ -178,21 +174,17 @@ public class BlockyBorder extends JavaPlugin {
         World world = getServer().getWorlds().get(0);
 
         int freq = Integer.parseInt(jobProps.getProperty("freq"));
-        int step = Integer.parseInt(jobProps.getProperty("step"));
         int cmaxX = Integer.parseInt(jobProps.getProperty("cmaxX"));
         int cminZ = Integer.parseInt(jobProps.getProperty("cminZ"));
         int cmaxZ = Integer.parseInt(jobProps.getProperty("cmaxZ"));
         int total = Integer.parseInt(jobProps.getProperty("total"));
-        int totalSteps = Integer.parseInt(jobProps.getProperty("totalSteps"));
         int curX = Integer.parseInt(jobProps.getProperty("curX"));
         int curZ = Integer.parseInt(jobProps.getProperty("curZ"));
         int done = Integer.parseInt(jobProps.getProperty("done"));
-        int currentStep = Integer.parseInt(jobProps.getProperty("currentStep"));
-        int thisStep = Integer.parseInt(jobProps.getProperty("thisStep", "0"));
 
         this.isFilling = true;
         
-        FillStepTask fillTask = new FillStepTask(world, jobProps, cmaxX, cminZ, cmaxZ, freq, step, total, totalSteps, curX, curZ, done, currentStep, thisStep);
+        FillTaskContinuous fillTask = new FillTaskContinuous(world, jobProps, cmaxX, cminZ, cmaxZ, freq, total, curX, curZ, done);
         int taskId = getServer().getScheduler().scheduleSyncRepeatingTask(this, fillTask, TASK_START_DELAY_TICKS, TASK_REPEAT_TICKS);
         fillTask.setTaskId(taskId);
     }
@@ -211,9 +203,7 @@ public class BlockyBorder extends JavaPlugin {
         }
 
         if (jobProps.getProperty("running", "false").equals("true")) {
-            int currentStep = Integer.parseInt(jobProps.getProperty("currentStep", "1"));
-            int totalSteps = Integer.parseInt(jobProps.getProperty("totalSteps", "1"));
-            LOG.info("[BlockyBorder] Continuando trabalho de pré-geração. Iniciando step " + currentStep + " de " + totalSteps + "...");
+            LOG.info("[BlockyBorder] Continuando trabalho de pré-geração contínua...");
             startFillTask(jobProps);
         }
     }
@@ -237,77 +227,72 @@ public class BlockyBorder extends JavaPlugin {
             return true;
         }
 
-        int freq = DEFAULT_FILL_FREQ, pad = DEFAULT_FILL_PAD, step = DEFAULT_FILL_STEP;
+        // Removido o argumento [step]
+        int freq = DEFAULT_FILL_FREQ, pad = DEFAULT_FILL_PAD;
         if (args.length >= 1)
             try { freq = Math.max(1, Integer.parseInt(args[0])); } catch (Exception ignored) {}
         if (args.length >= 2)
             try { pad = Integer.parseInt(args[1]); } catch (Exception ignored) {}
-        if (args.length >= 3)
-            try { step = Math.max(freq, Integer.parseInt(args[2])); } catch (Exception ignored) {}
 
         int cminX = ((int)this.minX >> 4) - pad, cmaxX = ((int)this.maxX >> 4) + pad;
         int cminZ = ((int)this.minZ >> 4) - pad, cmaxZ = ((int)this.maxZ >> 4) + pad;
 
         int total = (cmaxX - cminX + 1) * (cmaxZ - cminZ + 1);
-        int totalSteps = (int)Math.ceil((double)total / step);
-        if (totalSteps == 0) totalSteps = 1;
 
         Properties jobProps = new Properties();
         jobProps.setProperty("running", "true");
         jobProps.setProperty("freq", String.valueOf(freq));
         jobProps.setProperty("pad", String.valueOf(pad));
-        jobProps.setProperty("step", String.valueOf(step));
         jobProps.setProperty("cminX", String.valueOf(cminX));
         jobProps.setProperty("cmaxX", String.valueOf(cmaxX));
         jobProps.setProperty("cminZ", String.valueOf(cminZ));
         jobProps.setProperty("cmaxZ", String.valueOf(cmaxZ));
         jobProps.setProperty("total", String.valueOf(total));
-        jobProps.setProperty("totalSteps", String.valueOf(totalSteps));
         jobProps.setProperty("curX", String.valueOf(cminX)); 
         jobProps.setProperty("curZ", String.valueOf(cminZ)); 
         jobProps.setProperty("done", "0"); 
-        jobProps.setProperty("currentStep", "1"); 
-        jobProps.setProperty("thisStep", "0"); 
+        // Removidas propriedades de "step"
 
         saveFillJob(jobProps);
-        sender.sendMessage("§a[BlockyBorder] Iniciando pré-geração automática.");
-        sender.sendMessage("§aTotal de " + total + " chunks em " + totalSteps + " steps de " + step + " chunks.");
+        sender.sendMessage("§a[BlockyBorder] Iniciando pré-geração contínua.");
+        sender.sendMessage("§aTotal de " + total + " chunks. O servidor pode congelar por longos períodos!");
         startFillTask(jobProps);
 
         return true;
     }
 
 
-    class FillStepTask implements Runnable {
+    /**
+     * Tarefa de preenchimento contínua (sem steps)
+     * Tenta descarregar chunks para aliviar a memória.
+     */
+    class FillTaskContinuous implements Runnable {
         private final World world;
         private final Properties jobProps;
-        private final int maxX, minZ, maxZ, freq, step, total, totalSteps;
-        private int curX, curZ, done, thisStep, currentStep;
+        private final int maxX, minZ, maxZ, freq, total;
+        private int curX, curZ, done;
         private int logCounter = 0;
         private int taskId;
 
-        FillStepTask(World w, Properties jobProps, int maxX, int minZ, int maxZ, int freq, int step, int total, int totalSteps, int curX, int curZ, int done, int currentStep, int thisStep) {
+        FillTaskContinuous(World w, Properties jobProps, int maxX, int minZ, int maxZ, int freq, int total, int curX, int curZ, int done) {
             this.world = w;
             this.jobProps = jobProps; 
             this.maxX = maxX;
             this.minZ = minZ;
             this.maxZ = maxZ;
             this.freq = freq;
-            this.step = step;
             this.total = total;
-            this.totalSteps = totalSteps;
             this.curX = curX;
             this.curZ = curZ;
             this.done = done;
-            this.currentStep = currentStep;
-            this.thisStep = thisStep; 
         }
 
         public void setTaskId(int id) { this.taskId = id; }
 
         public void run() {
             int count = 0;
-            while (count < this.freq && this.curX <= this.maxX && thisStep < step && done < total) {
+            // Loop contínuo, sem verificação de 'thisStep'
+            while (count < this.freq && this.curX <= this.maxX && done < total) {
                 if (this.curZ > this.maxZ) {
                     this.curZ = this.minZ;
                     this.curX++;
@@ -315,118 +300,54 @@ public class BlockyBorder extends JavaPlugin {
                 }
                 if (this.curX > this.maxX) break;
 
+                // 1. Popula o chunk
                 BlockyBorder.this.forcePopulate(this.world, this.curX, this.curZ);
                 
+                // 2. Tenta descarregar o chunk anterior (se possível)
+                // (Descarrega o chunk que acabamos de popular)
+                this.world.unloadChunk(this.curX, this.curZ);
+
                 this.done++;
                 count++;
                 this.curZ++;
-                this.thisStep++;
                 this.logCounter++;
 
                 if (this.logCounter >= LOG_FREQUENCY) {
                     double percent = (double)this.done / this.total * 100.0;
                     LOG.info(String.format("[BlockyBorder] Progresso: %d / %d chunks (%.2f%%)", this.done, this.total, percent));
                     this.logCounter = 0;
+                    
+                    // Salva o progresso no log, para reduzir I/O
+                    this.jobProps.setProperty("curX", String.valueOf(this.curX));
+                    this.jobProps.setProperty("curZ", String.valueOf(this.curZ));
+                    this.jobProps.setProperty("done", String.valueOf(this.done));
+                    BlockyBorder.this.saveFillJob(this.jobProps);
                 }
             }
+            
+            // Salva o progresso final do tick (se não foi salvo no log)
+            if (this.logCounter > 0) {
+                this.jobProps.setProperty("curX", String.valueOf(this.curX));
+                this.jobProps.setProperty("curZ", String.valueOf(this.curZ));
+                this.jobProps.setProperty("done", String.valueOf(this.done));
+                BlockyBorder.this.saveFillJob(this.jobProps);
+            }
 
-            this.jobProps.setProperty("curX", String.valueOf(this.curX));
-            this.jobProps.setProperty("curZ", String.valueOf(this.curZ));
-            this.jobProps.setProperty("done", String.valueOf(this.done));
-            this.jobProps.setProperty("thisStep", String.valueOf(this.thisStep));
-            BlockyBorder.this.saveFillJob(this.jobProps);
 
-            // 1. O TRABALHO INTEIRO TERMINOU?
+            // O TRABALHO INTEIRO TERMINOU?
             if (this.curX > this.maxX || this.done >= this.total) {
                 LOG.info("[BlockyBorder] Mapa completo! Todos os " + this.total + " chunks foram gerados.");
-                if (BlockyBorder.this.fillJobFile.exists()) {
-                    BlockyBorder.this.fillJobFile.delete(); 
-                }
+                
+                this.jobProps.setProperty("running", "false"); // Marca como não-rodando
+                BlockyBorder.this.saveFillJob(this.jobProps);
+                // NOTA: Deixamos o arquivo de progresso, não deletamos.
+                
                 BlockyBorder.this.isFilling = false; 
                 Bukkit.getScheduler().cancelTask(this.taskId);
                 return;
             }
 
-            // 2. ESTE STEP TERMINOU (E O TRABALHO AINDA NÃO)?
-            if (thisStep >= step) {
-                LOG.info("[BlockyBorder] Fim do step " + this.currentStep + "/" + this.totalSteps + ".");
-                LOG.info("[BlockyBorder] Agendando reinício gracioso com sobreposição (overlap)...");
-
-                BlockyBorder.this.isFilling = false;
-                Bukkit.getScheduler().cancelTask(this.taskId);
-
-                Bukkit.getScheduler().scheduleSyncDelayedTask(BlockyBorder.this, 
-                    new ShutdownTask(BlockyBorder.this, this.jobProps, this.currentStep + 1), 
-                    SHUTDOWN_SAVE_DELAY_TICKS); // Espera 1 segundo
-                
-                return; 
-            }
-        }
-    }
-
-    /**
-     * Nova classe dedicada para cuidar do desligamento gracioso.
-     * AGORA TAMBÉM INCLUI A LÓGICA DE SOBREPOSIÇÃO (OVERLAP).
-     */
-    class ShutdownTask implements Runnable {
-        private final BlockyBorder plugin;
-        private final Properties jobProps;
-        private final int nextStep;
-
-        ShutdownTask(BlockyBorder plugin, Properties jobProps, int nextStep) {
-            this.plugin = plugin;
-            this.jobProps = jobProps;
-            this.nextStep = nextStep;
-        }
-
-        public void run() {
-            LOG.info("[BlockyBorder] ShutdownTask: Iniciando processo de reinício.");
-
-            // --- LÓGICA DE SOBREPOSIÇÃO (OVERLAP) ---
-            int curX = Integer.parseInt(this.jobProps.getProperty("curX"));
-            int cminX = Integer.parseInt(this.jobProps.getProperty("cminX"));
-            int cminZ = Integer.parseInt(this.jobProps.getProperty("cminZ"));
-
-            // 1. Calcula o novo X "rebobinado"
-            int newCurX = curX - STEP_OVERLAP_COLUMNS;
-            
-            // 2. Garante que não "rebobinou" para antes do início do mapa
-            if (newCurX < cminX) {
-                newCurX = cminX;
-            }
-
-            LOG.info("[BlockyBorder] ShutdownTask: Rebobinando " + (curX - newCurX) + " colunas para sobreposição.");
-            LOG.info("[BlockyBorder] ShutdownTask: Próximo step começará em X=" + newCurX + " Z=" + cminZ);
-
-            // 3. Prepara o arquivo de job para o *próximo* step com as coordenadas rebobinadas
-            this.jobProps.setProperty("currentStep", String.valueOf(this.nextStep));
-            this.jobProps.setProperty("thisStep", "0"); // Reseta o progresso do step
-            this.jobProps.setProperty("curX", String.valueOf(newCurX)); // Define o X rebobinado
-            this.jobProps.setProperty("curZ", String.valueOf(cminZ)); // Reseta o Z para o início da coluna
-            
-            // Nota: Não ajustamos o 'done'. A contagem de progresso ficará um pouco inflada,
-            // mas isso é inofensivo e garante a correção da "costura".
-
-            // --- FIM DA LÓGICA DE SOBREPOSIÇÃO ---
-
-            // 4. Força o salvamento de tudo que está na memória
-            LOG.info("[BlockyBorder] ShutdownTask: Forçando salvamento de todos os mundos e jogadores...");
-            Bukkit.getServer().savePlayers();
-            for (World w : Bukkit.getServer().getWorlds()) {
-                w.save();
-            }
-            
-            // 5. Salva o arquivo de job (agora que o mundo está salvo E com o overlap)
-            this.plugin.saveFillJob(this.jobProps);
-            LOG.info("[BlockyBorder] ShutdownTask: Salvamento completo. Desligando em 5 segundos...");
-
-            // 6. Agenda o desligamento final com um delay
-            this.plugin.getServer().getScheduler().scheduleSyncDelayedTask(this.plugin, new Runnable() {
-                public void run() {
-                    LOG.info("[BlockyBorder] ShutdownTask: Desligando agora.");
-                    Bukkit.getServer().shutdown();
-                }
-            }, SHUTDOWN_FINAL_DELAY_TICKS); // Espera 5 segundos
+            // Não há mais lógica de "step", então a task continua indefinidamente.
         }
     }
 }
