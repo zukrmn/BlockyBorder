@@ -306,17 +306,32 @@ public class BlockyBorder extends JavaPlugin {
 
         public void run() {
             int count = 0;
-            while (count < this.freq && this.curX <= this.maxX && thisStep < step && done < total) {
+            
+            // --- INÍCIO DA CORREÇÃO (Bug do "Travamento Zumbi") ---
+            //
+            // A condição "done < total" foi REMOVIDA do loop.
+            // O contador 'done' não é mais confiável por causa da sobreposição (overlap).
+            // O loop agora SÓ depende das coordenadas (curX <= maxX) e do step.
+            //
+            while (count < this.freq && this.curX <= this.maxX && thisStep < step) {
+            // --- FIM DA CORREÇÃO ---
+                
                 if (this.curZ > this.maxZ) {
                     this.curZ = this.minZ;
                     this.curX++;
                     continue;
                 }
+                
+                // Precisamos checar curX > maxX AQUI TAMBÉM, caso o curX++ acima
+                // tenha sido o último.
                 if (this.curX > this.maxX) break;
 
                 BlockyBorder.this.forcePopulate(this.world, this.curX, this.curZ);
                 
-                this.done++;
+                // 'done' agora é apenas para o log, não para a lógica.
+                if (this.done < this.total) {
+                    this.done++;
+                }
                 count++;
                 this.curZ++;
                 this.thisStep++;
@@ -324,6 +339,10 @@ public class BlockyBorder extends JavaPlugin {
 
                 if (this.logCounter >= LOG_FREQUENCY) {
                     double percent = (double)this.done / this.total * 100.0;
+                    // Limita a porcentagem a 99.99% se ainda não tiver terminado
+                    if (percent >= 100.0 && this.curX <= this.maxX) {
+                        percent = 99.99;
+                    }
                     LOG.info(String.format("[BlockyBorder] Progresso: %d / %d chunks (%.2f%%)", this.done, this.total, percent));
                     this.logCounter = 0;
                 }
@@ -335,9 +354,7 @@ public class BlockyBorder extends JavaPlugin {
             this.jobProps.setProperty("thisStep", String.valueOf(this.thisStep));
             BlockyBorder.this.saveFillJob(this.jobProps);
 
-            // 1. O TRABALHO INTEIRO TERMINOU?
-            // CORREÇÃO: A verificação de 'done < total' no loop principal previne
-            // que esta condição seja atingida prematuramente.
+            // 1. O TRABALHO INTEIRO TERMINOU? (Baseado em Coordenadas)
             if (this.curX > this.maxX) {
                 LOG.info("[BlockyBorder] Mapa completo! Todas as colunas X foram processadas.");
                 if (BlockyBorder.this.fillJobFile.exists()) {
@@ -347,8 +364,6 @@ public class BlockyBorder extends JavaPlugin {
                 Bukkit.getScheduler().cancelTask(this.taskId);
                 return;
             }
-            // Se 'done >= total' for atingido mas 'curX <= maxX', o bug aconteceu.
-            // A correção está na ShutdownTask.
 
             // 2. ESTE STEP TERMINOU (E O TRABALHO AINDA NÃO)?
             if (thisStep >= step) {
@@ -368,7 +383,7 @@ public class BlockyBorder extends JavaPlugin {
     }
 
     /**
-     * Tarefa de Desligamento com CORREÇÃO DE CONTADOR 'DONE'
+     * Tarefa de Desligamento (Corrigida para o bug do 'done')
      */
     class ShutdownTask implements Runnable {
         private final BlockyBorder plugin;
@@ -390,20 +405,15 @@ public class BlockyBorder extends JavaPlugin {
             int cminZ = Integer.parseInt(this.jobProps.getProperty("cminZ"));
             int cmaxZ = Integer.parseInt(this.jobProps.getProperty("cmaxZ"));
 
-            // 1. Calcula o novo X "rebobinado"
             int newCurX = curX - STEP_OVERLAP_COLUMNS;
             if (newCurX < cminX) {
                 newCurX = cminX;
             }
 
-            // --- INÍCIO DA CORREÇÃO (BUG do Canto Direito) ---
-            
-            // 2. Calcula quantos chunks estamos "rebobinando"
             int colsRewound = curX - newCurX;
             int chunksInColumn = (cmaxZ - cminZ + 1);
             int chunksToSubtract = colsRewound * chunksInColumn;
 
-            // 3. Pega o contador 'done' atual e o subtrai
             int done = Integer.parseInt(this.jobProps.getProperty("done"));
             int newDone = done - chunksToSubtract;
             if (newDone < 0) {
@@ -414,27 +424,23 @@ public class BlockyBorder extends JavaPlugin {
             LOG.info("[BlockyBorder] ShutdownTask: Ajustando 'done' de " + done + " para " + newDone + ".");
             LOG.info("[BlockyBorder] ShutdownTask: Próximo step começará em X=" + newCurX + " Z=" + cminZ);
 
-            // 4. Prepara o arquivo de job para o *próximo* step
             this.jobProps.setProperty("currentStep", String.valueOf(this.nextStep));
             this.jobProps.setProperty("thisStep", "0");
             this.jobProps.setProperty("curX", String.valueOf(newCurX)); 
             this.jobProps.setProperty("curZ", String.valueOf(cminZ));
-            this.jobProps.setProperty("done", String.valueOf(newDone)); // Salva o 'done' corrigido
+            this.jobProps.setProperty("done", String.valueOf(newDone)); 
 
-            // --- FIM DA CORREÇÃO ---
+            // --- FIM DA LÓGICA DE SOBREPOSIÇÃO ---
 
-            // 5. Força o salvamento de tudo
             LOG.info("[BlockyBorder] ShutdownTask: Forçando salvamento de todos os mundos e jogadores...");
             Bukkit.getServer().savePlayers();
             for (World w : Bukkit.getServer().getWorlds()) {
                 w.save();
             }
             
-            // 6. Salva o arquivo de job (agora que o mundo está salvo E com o overlap corrigido)
             this.plugin.saveFillJob(this.jobProps);
             LOG.info("[BlockyBorder] ShutdownTask: Salvamento completo. Desligando em 5 segundos...");
 
-            // 7. Agenda o desligamento final
             this.plugin.getServer().getScheduler().scheduleSyncDelayedTask(this.plugin, new Runnable() {
                 public void run() {
                     LOG.info("[BlockyBorder] ShutdownTask: Desligando agora.");
