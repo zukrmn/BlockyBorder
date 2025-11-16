@@ -1,5 +1,5 @@
-name: BlockyBorder
-main: com.blockycraft.blockyborder.BlockyBorder
+name: BlockyGen
+main: com.blockycraft.blockygen.BlockyGen
 version: 1.0
 author: Bernardo Zukerman
 description: Sistema de borda contínua e pré-carregamento de chunks para o BlockyCRAFT
@@ -8,5 +8,5 @@ commands:
   fill:
     description: Pré-geração dos chunks do mundo dentro da borda.
     usage: /fill [freq] [pad]
-    permission: blockyborder.fill
+    permission: blockygen.fill
     permission-message: Você não tem permissão para usar este comando.

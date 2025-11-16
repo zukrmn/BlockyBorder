@@ -1,4 +1,4 @@
-package com.blockycraft.blockyborder;
+package com.blockycraft.blockygen;
 
 import java.io.*;
 import java.util.*;
@@ -19,7 +19,7 @@ import org.bukkit.generator.BlockPopulator;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 
-public class BlockyBorder extends JavaPlugin {
+public class BlockyGen extends JavaPlugin {
     private static final Logger LOG = Logger.getLogger("Minecraft");
     private final BorderPlayerListener playerListener = new BorderPlayerListener();
     private Properties cfg = new Properties();
@@ -50,17 +50,17 @@ public class BlockyBorder extends JavaPlugin {
         fillJobFile = new File(getDataFolder(), "fill_job.properties"); 
 
         getServer().getPluginManager().registerEvent(Event.Type.PLAYER_MOVE, (Listener)this.playerListener, Event.Priority.Normal, (Plugin)this);
-        LOG.info("[BlockyBorder] Enabled. Border is at (" + this.minX + "," + this.minZ + ") to (" + this.maxX + "," + this.maxZ + "). Loop mode: " + this.loopEnabled);
+        LOG.info("[BlockyGen] Enabled. Border is at (" + this.minX + "," + this.minZ + ") to (" + this.maxX + "," + this.maxZ + "). Loop mode: " + this.loopEnabled);
         
         getServer().getScheduler().scheduleSyncRepeatingTask(this, new Runnable() {
-            public void run() { BlockyBorder.this.borderIgnoreTick(); }
+            public void run() { BlockyGen.this.borderIgnoreTick(); }
         }, 1L, 1L);
 
         resumeFillJob();
     }
 
     public void onDisable() {
-        LOG.info("[BlockyBorder] Disabled.");
+        LOG.info("[BlockyGen] Disabled.");
     }
 
     private void loadConfig() {
@@ -75,17 +75,17 @@ public class BlockyBorder extends JavaPlugin {
                 this.cfg.setProperty("z2", "2688");
                 this.cfg.setProperty("buffer", "2.0");
                 FileOutputStream os = new FileOutputStream(configFile);
-                this.cfg.store(os, "BlockyBorder Config");
+                this.cfg.store(os, "BlockyGen Config");
                 os.close();
             } catch (Exception e) {
-                LOG.warning("[BlockyBorder] Could not write default config: " + e.getMessage());
+                LOG.warning("[BlockyGen] Could not write default config: " + e.getMessage());
             }
         try {
             FileInputStream is = new FileInputStream(configFile);
             this.cfg.load(is);
             is.close();
         } catch (Exception e) {
-            LOG.warning("[BlockyBorder] Could not read config: " + e.getMessage());
+            LOG.warning("[BlockyGen] Could not read config: " + e.getMessage());
         }
         this.enabled = boolProp("enabled", true);
         this.loopEnabled = boolProp("loop", true);
@@ -116,7 +116,7 @@ public class BlockyBorder extends JavaPlugin {
         int x = location.getBlockX(), z = location.getBlockZ();
         int highestY = world.getHighestBlockYAt(x, z);
         location.setY(highestY + 1.2D);
-        this.ignoreBorderTicks.put(player.getUniqueId(), Integer.valueOf(BlockyBorder.IGNORE_TICKS));
+        this.ignoreBorderTicks.put(player.getUniqueId(), Integer.valueOf(BlockyGen.IGNORE_TICKS));
         forcePopulate(world, x >> 4, z >> 4);
         player.teleport(location);
     }
@@ -137,7 +137,7 @@ public class BlockyBorder extends JavaPlugin {
     private void forcePopulate(World world, int chunkX, int chunkZ) {
         Chunk c = world.getChunkAt(chunkX, chunkZ); 
         if (c == null) {
-            LOG.warning("[BlockyBorder] Falha ao carregar/gerar chunk em " + chunkX + "," + chunkZ);
+            LOG.warning("[BlockyGen] Falha ao carregar/gerar chunk em " + chunkX + "," + chunkZ);
             return; 
         }
         Random rand = new Random(world.getSeed());
@@ -151,24 +151,24 @@ public class BlockyBorder extends JavaPlugin {
     private class BorderPlayerListener extends PlayerListener {
         private BorderPlayerListener() {}
         public void onPlayerMove(PlayerMoveEvent event) {
-            if (!BlockyBorder.this.enabled) return;
+            if (!BlockyGen.this.enabled) return;
             Player player = event.getPlayer();
-            if (BlockyBorder.this.ignoreBorderTicks.containsKey(player.getUniqueId())) return;
+            if (BlockyGen.this.ignoreBorderTicks.containsKey(player.getUniqueId())) return;
             Location to = event.getTo();
             double toX = to.getX(), toZ = to.getZ();
-            if (toX < BlockyBorder.this.minX || toX > BlockyBorder.this.maxX || toZ < BlockyBorder.this.minZ || toZ > BlockyBorder.this.maxZ)
-                if (BlockyBorder.this.loopEnabled) {
+            if (toX < BlockyGen.this.minX || toX > BlockyGen.this.maxX || toZ < BlockyGen.this.minZ || toZ > BlockyGen.this.maxZ)
+                if (BlockyGen.this.loopEnabled) {
                     Location newLoc = to.clone();
-                    if (toX < BlockyBorder.this.minX) newLoc.setX(BlockyBorder.this.maxX - BlockyBorder.this.buffer);
-                    else if (toX > BlockyBorder.this.maxX) newLoc.setX(BlockyBorder.this.minX + BlockyBorder.this.buffer);
-                    if (toZ < BlockyBorder.this.minZ) newLoc.setZ(BlockyBorder.this.maxZ - BlockyBorder.this.buffer);
-                    else if (toZ > BlockyBorder.this.maxZ) newLoc.setZ(BlockyBorder.this.minZ + BlockyBorder.this.buffer);
-                    BlockyBorder.this.safeTeleport(player, newLoc);
+                    if (toX < BlockyGen.this.minX) newLoc.setX(BlockyGen.this.maxX - BlockyGen.this.buffer);
+                    else if (toX > BlockyGen.this.maxX) newLoc.setX(BlockyGen.this.minX + BlockyGen.this.buffer);
+                    if (toZ < BlockyGen.this.minZ) newLoc.setZ(BlockyGen.this.maxZ - BlockyGen.this.buffer);
+                    else if (toZ > BlockyGen.this.maxZ) newLoc.setZ(BlockyGen.this.minZ + BlockyGen.this.buffer);
+                    BlockyGen.this.safeTeleport(player, newLoc);
                 } else {
                     Location from = event.getFrom(), safePos = from.clone();
-                    safePos.setX(Math.max(BlockyBorder.this.minX, Math.min(BlockyBorder.this.maxX, from.getX())));
-                    safePos.setZ(Math.max(BlockyBorder.this.minZ, Math.min(BlockyBorder.this.maxZ, from.getZ())));
-                    BlockyBorder.this.safeTeleport(player, safePos);
+                    safePos.setX(Math.max(BlockyGen.this.minX, Math.min(BlockyGen.this.maxX, from.getX())));
+                    safePos.setZ(Math.max(BlockyGen.this.minZ, Math.min(BlockyGen.this.maxZ, from.getZ())));
+                    BlockyGen.this.safeTeleport(player, safePos);
                 }
         }
     }
@@ -205,23 +205,23 @@ public class BlockyBorder extends JavaPlugin {
         try (FileInputStream fis = new FileInputStream(fillJobFile)) {
             jobProps.load(fis);
         } catch (Exception e) {
-            LOG.warning("[BlockyBorder] Falha ao ler arquivo de job: " + e.getMessage());
+            LOG.warning("[BlockyGen] Falha ao ler arquivo de job: " + e.getMessage());
             return;
         }
 
         if (jobProps.getProperty("running", "false").equals("true")) {
             int currentStep = Integer.parseInt(jobProps.getProperty("currentStep", "1"));
             int totalSteps = Integer.parseInt(jobProps.getProperty("totalSteps", "1"));
-            LOG.info("[BlockyBorder] Continuando trabalho de pré-geração. Iniciando step " + currentStep + " de " + totalSteps + "...");
+            LOG.info("[BlockyGen] Continuando trabalho de pré-geração. Iniciando step " + currentStep + " de " + totalSteps + "...");
             startFillTask(jobProps);
         }
     }
 
     public void saveFillJob(Properties jobProps) {
         try (FileOutputStream fos = new FileOutputStream(fillJobFile)) {
-            jobProps.store(fos, "BlockyBorder Fill Job State");
+            jobProps.store(fos, "BlockyGen Fill Job State");
         } catch (Exception e) {
-            LOG.warning("[BlockyBorder] Falha ao salvar progresso do job: " + e.getMessage());
+            LOG.warning("[BlockyGen] Falha ao salvar progresso do job: " + e.getMessage());
         }
     }
 
@@ -232,7 +232,7 @@ public class BlockyBorder extends JavaPlugin {
             return false;
 
         if (this.isFilling) {
-            sender.sendMessage("§c[BlockyBorder] Um trabalho de pré-geração já está em andamento!");
+            sender.sendMessage("§c[BlockyGen] Um trabalho de pré-geração já está em andamento!");
             return true;
         }
 
@@ -269,7 +269,7 @@ public class BlockyBorder extends JavaPlugin {
         jobProps.setProperty("thisStep", "0"); 
 
         saveFillJob(jobProps);
-        sender.sendMessage("§a[BlockyBorder] Iniciando pré-geração automática.");
+        sender.sendMessage("§a[BlockyGen] Iniciando pré-geração automática.");
         sender.sendMessage("§aTotal de " + total + " chunks em " + totalSteps + " steps de " + step + " chunks.");
         startFillTask(jobProps);
 
@@ -326,7 +326,7 @@ public class BlockyBorder extends JavaPlugin {
                 // tenha sido o último.
                 if (this.curX > this.maxX) break;
 
-                BlockyBorder.this.forcePopulate(this.world, this.curX, this.curZ);
+                BlockyGen.this.forcePopulate(this.world, this.curX, this.curZ);
                 
                 // 'done' agora é apenas para o log, não para a lógica.
                 if (this.done < this.total) {
@@ -343,7 +343,7 @@ public class BlockyBorder extends JavaPlugin {
                     if (percent >= 100.0 && this.curX <= this.maxX) {
                         percent = 99.99;
                     }
-                    LOG.info(String.format("[BlockyBorder] Progresso: %d / %d chunks (%.2f%%)", this.done, this.total, percent));
+                    LOG.info(String.format("[BlockyGen] Progresso: %d / %d chunks (%.2f%%)", this.done, this.total, percent));
                     this.logCounter = 0;
                 }
             }
@@ -352,29 +352,29 @@ public class BlockyBorder extends JavaPlugin {
             this.jobProps.setProperty("curZ", String.valueOf(this.curZ));
             this.jobProps.setProperty("done", String.valueOf(this.done));
             this.jobProps.setProperty("thisStep", String.valueOf(this.thisStep));
-            BlockyBorder.this.saveFillJob(this.jobProps);
+            BlockyGen.this.saveFillJob(this.jobProps);
 
             // 1. O TRABALHO INTEIRO TERMINOU? (Baseado em Coordenadas)
             if (this.curX > this.maxX) {
-                LOG.info("[BlockyBorder] Mapa completo! Todas as colunas X foram processadas.");
-                if (BlockyBorder.this.fillJobFile.exists()) {
-                    BlockyBorder.this.fillJobFile.delete(); 
+                LOG.info("[BlockyGen] Mapa completo! Todas as colunas X foram processadas.");
+                if (BlockyGen.this.fillJobFile.exists()) {
+                    BlockyGen.this.fillJobFile.delete(); 
                 }
-                BlockyBorder.this.isFilling = false; 
+                BlockyGen.this.isFilling = false; 
                 Bukkit.getScheduler().cancelTask(this.taskId);
                 return;
             }
 
             // 2. ESTE STEP TERMINOU (E O TRABALHO AINDA NÃO)?
             if (thisStep >= step) {
-                LOG.info("[BlockyBorder] Fim do step " + this.currentStep + "/" + this.totalSteps + ".");
-                LOG.info("[BlockyBorder] Agendando reinício gracioso com sobreposição (overlap)...");
+                LOG.info("[BlockyGen] Fim do step " + this.currentStep + "/" + this.totalSteps + ".");
+                LOG.info("[BlockyGen] Agendando reinício gracioso com sobreposição (overlap)...");
 
-                BlockyBorder.this.isFilling = false;
+                BlockyGen.this.isFilling = false;
                 Bukkit.getScheduler().cancelTask(this.taskId);
 
-                Bukkit.getScheduler().scheduleSyncDelayedTask(BlockyBorder.this, 
-                    new ShutdownTask(BlockyBorder.this, this.jobProps, this.currentStep + 1), 
+                Bukkit.getScheduler().scheduleSyncDelayedTask(BlockyGen.this, 
+                    new ShutdownTask(BlockyGen.this, this.jobProps, this.currentStep + 1), 
                     SHUTDOWN_SAVE_DELAY_TICKS); // Espera 1 segundo
                 
                 return; 
@@ -386,18 +386,18 @@ public class BlockyBorder extends JavaPlugin {
      * Tarefa de Desligamento (Corrigida para o bug do 'done')
      */
     class ShutdownTask implements Runnable {
-        private final BlockyBorder plugin;
+        private final BlockyGen plugin;
         private final Properties jobProps;
         private final int nextStep;
 
-        ShutdownTask(BlockyBorder plugin, Properties jobProps, int nextStep) {
+        ShutdownTask(BlockyGen plugin, Properties jobProps, int nextStep) {
             this.plugin = plugin;
             this.jobProps = jobProps;
             this.nextStep = nextStep;
         }
 
         public void run() {
-            LOG.info("[BlockyBorder] ShutdownTask: Iniciando processo de reinício.");
+            LOG.info("[BlockyGen] ShutdownTask: Iniciando processo de reinício.");
 
             // --- LÓGICA DE SOBREPOSIÇÃO (OVERLAP) ---
             int curX = Integer.parseInt(this.jobProps.getProperty("curX"));
@@ -420,9 +420,9 @@ public class BlockyBorder extends JavaPlugin {
                 newDone = 0;
             }
 
-            LOG.info("[BlockyBorder] ShutdownTask: Rebobinando " + colsRewound + " colunas (" + chunksToSubtract + " chunks).");
-            LOG.info("[BlockyBorder] ShutdownTask: Ajustando 'done' de " + done + " para " + newDone + ".");
-            LOG.info("[BlockyBorder] ShutdownTask: Próximo step começará em X=" + newCurX + " Z=" + cminZ);
+            LOG.info("[BlockyGen] ShutdownTask: Rebobinando " + colsRewound + " colunas (" + chunksToSubtract + " chunks).");
+            LOG.info("[BlockyGen] ShutdownTask: Ajustando 'done' de " + done + " para " + newDone + ".");
+            LOG.info("[BlockyGen] ShutdownTask: Próximo step começará em X=" + newCurX + " Z=" + cminZ);
 
             this.jobProps.setProperty("currentStep", String.valueOf(this.nextStep));
             this.jobProps.setProperty("thisStep", "0");
@@ -432,18 +432,18 @@ public class BlockyBorder extends JavaPlugin {
 
             // --- FIM DA LÓGICA DE SOBREPOSIÇÃO ---
 
-            LOG.info("[BlockyBorder] ShutdownTask: Forçando salvamento de todos os mundos e jogadores...");
+            LOG.info("[BlockyGen] ShutdownTask: Forçando salvamento de todos os mundos e jogadores...");
             Bukkit.getServer().savePlayers();
             for (World w : Bukkit.getServer().getWorlds()) {
                 w.save();
             }
             
             this.plugin.saveFillJob(this.jobProps);
-            LOG.info("[BlockyBorder] ShutdownTask: Salvamento completo. Desligando em 5 segundos...");
+            LOG.info("[BlockyGen] ShutdownTask: Salvamento completo. Desligando em 5 segundos...");
 
             this.plugin.getServer().getScheduler().scheduleSyncDelayedTask(this.plugin, new Runnable() {
                 public void run() {
-                    LOG.info("[BlockyBorder] ShutdownTask: Desligando agora.");
+                    LOG.info("[BlockyGen] ShutdownTask: Desligando agora.");
                     Bukkit.getServer().shutdown();
                 }
             }, SHUTDOWN_FINAL_DELAY_TICKS);
